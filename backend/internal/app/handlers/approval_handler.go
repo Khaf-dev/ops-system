@@ -11,51 +11,58 @@ import (
 )
 
 type ApprovalHandler struct {
-	Service *services.ApprovalService
+	Svc *services.ApprovalService
 }
 
 func NewApprovalHandler(svc *services.ApprovalService) *ApprovalHandler {
-	return &ApprovalHandler{Service: svc}
+	return &ApprovalHandler{Svc: svc}
 }
 
 type ApprovalInput struct {
-	Decision string `json:"decision" binding:"required"`
+	Decision string `json:"decision" binding:"required"` // "approved" or "rejected"
 	Notes    string `json:"notes"`
 }
 
+// POST /approve/:id
 func (h *ApprovalHandler) HandleApproval(c *gin.Context) {
-	requestIDStr := c.Param("id")
-	requestID, err := uuid.Parse(requestIDStr)
+	reqIDStr := c.Param("id")
+	reqID, err := uuid.Parse(reqIDStr)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "invalid request ID")
+		utils.ErrorResponse(c, http.StatusBadRequest, "invalid request id")
 		return
 	}
 
 	var input ApprovalInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "invalid body")
+		utils.ErrorResponse(c, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	if input.Decision != "approved" && input.Decision != "rejected" {
+		utils.ErrorResponse(c, http.StatusBadRequest, "decision must be 'approved' or 'rejected'")
 		return
 	}
 
-	approvedIDStr, exists := c.Get("user_id")
-	if !exists {
+	userIDStr, ok := c.Get("user_id")
+	if !ok {
 		utils.ErrorResponse(c, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	approvedID, err := uuid.Parse(approvedIDStr.(string))
+	approverID, err := uuid.Parse(userIDStr.(string))
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusUnauthorized, "invalid approver")
+		utils.ErrorResponse(c, http.StatusBadRequest, "invalid user id")
 		return
 	}
 
-	if err := h.Service.HandleApproval(requestID, approvedID, input.Decision, input.Notes, time.Now()); err != nil {
-		utils.ErrorResponse(c, http.StatusInternalServerError, err.Error())
+	if err := h.Svc.HandleApproval(reqID, approverID, input.Decision, input.Notes, time.Now()); err != nil {
+		// graceful mapping
+		switch err {
+		case utils.ErrNotFound:
+			utils.ErrorResponse(c, http.StatusNotFound, "not found")
+		default:
+			utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
+		}
 		return
 	}
 
-	utils.SuccessResponse(c, http.StatusOK, "approval recorded", gin.H{
-		"request_id": requestID,
-		"decision":   input.Decision,
-		"notes":      input.Notes,
-	})
+	utils.SuccessResponse(c, http.StatusOK, "ok", nil)
 }

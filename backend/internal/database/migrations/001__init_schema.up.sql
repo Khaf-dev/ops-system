@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS request_types (
 -- ACTIVITIES
 CREATE TABLE IF NOT EXISTS activities (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name VARCHAR(100) NOT NULL,
+    name VARCHAR(100) NOT NULL UNIQUE,
     is_active BOOLEAN DEFAULT TRUE
 );
 
@@ -59,33 +59,40 @@ CREATE TABLE IF NOT EXISTS activities (
 CREATE TABLE IF NOT EXISTS ops_requests (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     requester_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    site_id UUID REFERENCES users(id),
-    request_type VARCHAR(100),
-    activity_name VARCHAR(150),
+
+    site_id UUID NOT NULL REFERENCES sites(id) ON DELETE RESTRICT,
+
+    request_type_id UUID NOT NULL REFERENCES request_types(id) ON DELETE RESTRICT,
+    activity_id UUID NOT NULL REFERENCES activities(id) ON DELETE RESTRICT,
+
     leader_name VARCHAR(150),
-    request_date DATE,
+    request_date TIMESTAMPTZ NOT NULL,
     location VARCHAR(255),
-    amount NUMERIC(12,2) NOT NULL,
+    amount NUMERIC(12,2) NOT NULL CHECK (amount >= 0),
     description TEXT,
-    approved_by_id UUID REFERENCES users(id),
+
+    approved_by_id UUID REFERENCES users(id) ON DELETE SET NULL,
+
     latitude NUMERIC(10,6),
     longitude NUMERIC(10,6),
-    status VARCHAR(20) DEFAULT 'pending',
+
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'done')),
+
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_ops_requests_requester_id ON ops_requests(requester_id);
 CREATE INDEX IF NOT EXISTS idx_ops_requests_status ON ops_requests(status);
-
+CREATE INDEX IF NOT EXISTS idx_ops_requests_site_id ON ops_requests(site_id);
 
 
 -- APPROVALS
 CREATE TABLE IF NOT EXISTS approvals (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     request_id UUID NOT NULL REFERENCES ops_requests(id) ON DELETE CASCADE,
-    approver_id UUID REFERENCES users(id),
-    decision VARCHAR(20),
+    approver_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    decision VARCHAR(20) NOT NULL CHECK (decision IN ('approved', 'rejected', 'pending')),
     notes TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -110,7 +117,7 @@ CREATE INDEX IF NOT EXISTS idx_attachments_request_id ON attachments(request_id)
 -- ACTIVITY LOGS
 CREATE TABLE IF NOT EXISTS activity_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    actor_id UUID REFERENCES users(id),
+    actor_id UUID REFERENCES users(id) ON DELETE SET NULL,
     action VARCHAR(255) NOT NULL,
     target_type VARCHAR(100),
     target_id UUID,

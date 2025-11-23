@@ -1,10 +1,13 @@
 package database
 
 import (
+	"database/sql"
 	"log"
 
 	"golang.org/x/crypto/bcrypt"
 )
+
+var DB *sql.DB
 
 func Seed() {
 	log.Println("Seeding initial data...")

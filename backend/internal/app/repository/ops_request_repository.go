@@ -32,6 +32,9 @@ func (r *OpsRequestRepository) GetByID(id uuid.UUID, preload ...string) (*models
 	var req models.OpsRequest
 	q := r.DB
 	for _, p := range preload {
+		if p == "" {
+			continue
+		}
 		q = q.Preload(p)
 	}
 	if err := q.First(&req, "id = ?", id).Error; err != nil {

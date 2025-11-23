@@ -13,7 +13,10 @@ func Register(
 	cfg *config.Config,
 	authH *handlers.AuthHandler,
 	opsH *handlers.OpsRequestHandler,
-	approvalH *handlers.ApprovalHandler) {
+	approvalH *handlers.ApprovalHandler,
+	att *handlers.AttachmentHandler,
+	adminH *handlers.AdminHandler,
+	adminReqTypeHandler *handlers.AdminRequestTypeHandler) {
 
 	api := r.Group("/api")
 
@@ -32,7 +35,7 @@ func Register(
 	ops.Use(middleware.JWTAuth(cfg))
 	{
 		ops.POST("", opsH.CreateOpsRequest)
-		ops.GET("", opsH.ListOpsRequests)
+		ops.GET("", opsH.ListOpsRequest)
 		ops.GET("/:id", opsH.GetOpsByRequestByID)
 		ops.PUT("/:id", opsH.UpdateOpsRequest)
 		ops.DELETE("/:id", opsH.DeleteOpsRequest)
@@ -43,6 +46,25 @@ func Register(
 	approve.Use(middleware.JWTAuth(cfg), middleware.RoleAllowed("admin"))
 	{
 		approve.POST("/:id", approvalH.HandleApproval)
+		approve.POST("/:id", approvalH.HandleApproval)
 		approve.POST("/:request_id/reject", approvalH.HandleApproval)
+	}
+
+	// ==== ATTACHMENT ==== //
+	attGroup := api.Group("attachments")
+	{
+		attGroup.POST("/:id/upload", att.Upload)
+	}
+
+	// ==== ADMIN ==== //
+	admin := r.Group("/admin")
+	admin.Use(middleware.JWTAuth(cfg), middleware.RoleAllowed("admin"))
+	{
+		admin.POST("/levels", adminH.CreateLevel)
+		admin.POST("/users/:id/levels", adminH.SetUserLevels)
+		admin.GET("/users", adminH.ListUsers)
+
+		rt := admin.Group("request-types")
+		adminReqTypeHandler.RegisterRoutes(rt)
 	}
 }

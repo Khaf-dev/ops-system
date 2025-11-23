@@ -1,10 +1,10 @@
 package handlers
 
 import (
-	"backend/internal/app/dto"
 	"backend/internal/app/models"
 	"backend/internal/app/services"
 	"backend/internal/app/utils"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -22,34 +22,35 @@ func NewOpsRequestHandler(svc *services.OpsRequestService) *OpsRequestHandler {
 }
 
 type CreateOpsRequestInput struct {
-	SiteID       *uuid.UUID `json:"site_id"`
-	RequestType  string     `json:"request_type" binding:"required"`
-	ActivityName string     `json:"activity_name" binding:"required"`
-	LeaderName   string     `json:"leader_name"`
-	RequestDate  *time.Time `json:"request_date"`
-	Location     string     `json:"location"`
-	Amount       float64    `json:"amount" binding:"required,gt=0"`
-	Description  string     `json:"description"`
-	Latitude     *float64   `json:"latitude"`
-	Longitude    *float64   `json:"longitude"`
+	SiteID        uuid.UUID  `json:"site_id" binding:"required"`
+	RequestTypeID uuid.UUID  `json:"request_type_id" binding:"required"`
+	ActivityID    uuid.UUID  `json:"activity_id" binding:"required"`
+	LeaderName    string     `json:"leader_name"`
+	RequestDate   *time.Time `json:"request_date" binding:"required"`
+	Location      string     `json:"location"`
+	Amount        float64    `json:"amount" binding:"required,gte=0"`
+	Description   string     `json:"description"`
+	Latitude      *float64   `json:"latitude"`
+	Longitude     *float64   `json:"longitude"`
 }
 
 type UpdateOpsRequestInput struct {
-	RequestType  string     `json:"request_type"`
-	ActivityName string     `json:"activity_name"`
-	LeaderName   string     `json:"leader_name"`
-	RequestDate  *time.Time `json:"request_date"`
-	Location     string     `json:"location"`
-	Amount       *float64   `json:"amount"`
-	Description  string     `json:"description"`
-	Status       string     `json:"status"`
+	LeaderName    *string    `json:"leader_name"`
+	RequestDate   *time.Time `json:"request_date"`
+	Location      *string    `json:"location"`
+	Amount        *float64   `json:"amount"`
+	Description   *string    `json:"description"`
+	Status        *string    `json:"status"` // only admin can set status
+	SiteID        *uuid.UUID `json:"site_id"`
+	RequestTypeID *uuid.UUID `json:"request_type_id"`
+	ActivityID    *uuid.UUID `json:"activity_id"`
 }
 
 // POST /ops
 func (h *OpsRequestHandler) CreateOpsRequest(c *gin.Context) {
 	var input CreateOpsRequestInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "invalid request body")
+		utils.ErrorResponse(c, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
 
@@ -65,57 +66,26 @@ func (h *OpsRequestHandler) CreateOpsRequest(c *gin.Context) {
 	}
 
 	req := &models.OpsRequest{
-		RequesterID:  requesterID,
-		SiteID:       input.SiteID,
-		RequestType:  input.RequestType,
-		ActivityName: input.ActivityName,
-		LeaderName:   input.LeaderName,
-		RequestDate:  input.RequestDate,
-		Location:     input.Location,
-		Amount:       input.Amount,
-		Description:  input.Description,
-		Latitude:     input.Latitude,
-		Longitude:    input.Longitude,
-		Status:       "pending",
+		RequesterID:   requesterID,
+		SiteID:        input.SiteID,
+		RequestTypeID: input.RequestTypeID,
+		ActivityID:    input.ActivityID,
+		LeaderName:    input.LeaderName,
+		RequestDate:   input.RequestDate,
+		Location:      input.Location,
+		Amount:        input.Amount,
+		Description:   input.Description,
+		Latitude:      input.Latitude,
+		Longitude:     input.Longitude,
 	}
 
-	if err := h.Svc.CreateOpsRequest(req); err != nil {
+	dtoCreated, err := h.Svc.CreateOpsRequest(req)
+	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	dto := mapToDTOForResponse(req)
-	utils.SuccessResponse(c, http.StatusCreated, "ops request created", dto)
-}
-
-func mapToDTOForResponse(m *models.OpsRequest) dto.OpsRequestDTO {
-	// reuse service mapping logic if u want -- duplication small for direct create response
-	var requesterName, siteName string
-	if m.Requester != nil {
-		requesterName = m.Requester.Name
-	}
-	if m.Site != nil {
-		siteName = m.Site.Name
-	}
-	return dto.OpsRequestDTO{
-		ID:            m.ID,
-		RequesterID:   m.RequesterID,
-		RequesterName: requesterName,
-		SiteID:        m.SiteID,
-		SiteName:      siteName,
-		RequestType:   m.RequestType,
-		ActivityName:  m.ActivityName,
-		LeaderName:    m.LeaderName,
-		RequestDate:   m.RequestDate,
-		Location:      m.Location,
-		Amount:        m.Amount,
-		Description:   m.Description,
-		Status:        m.Status,
-		Latitude:      m.Latitude,
-		Longitude:     m.Longitude,
-		CreatedAt:     m.CreatedAt,
-		UpdatedAt:     m.UpdatedAt,
-	}
+	utils.SuccessResponse(c, http.StatusCreated, "ops request created", dtoCreated)
 }
 
 // GET /ops/:id
@@ -126,33 +96,42 @@ func (h *OpsRequestHandler) GetOpsByRequestByID(c *gin.Context) {
 		utils.ErrorResponse(c, http.StatusBadRequest, "invalid id")
 		return
 	}
-	dto, err := h.Svc.GetByIDDTO(id)
+	dtoObj, err := h.Svc.GetByIDDTO(id)
 	if err != nil {
-		utils.ErrorResponse(c, http.StatusNotFound, "not found")
+		if errors.Is(err, utils.ErrNotFound) {
+			utils.ErrorResponse(c, http.StatusNotFound, "not found")
+			return
+		}
+		utils.ErrorResponse(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	utils.SuccessResponse(c, http.StatusOK, "ok", dto)
+	utils.SuccessResponse(c, http.StatusOK, "ok", dtoObj)
 }
 
 // GET /ops -> role based: admin -> all, user -> own
-func (h *OpsRequestHandler) ListOpsRequests(c *gin.Context) {
+func (h *OpsRequestHandler) ListOpsRequest(c *gin.Context) {
 	//parse pagination
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
 	uidStr, _ := c.Get("user_id")
-	role, _ := c.Get("role")
+	roleRaw, _ := c.Get("role")
+	role := ""
+	if roleRaw != nil {
+		role = roleRaw.(string)
+	}
+
 	var userID uuid.UUID
 	if uidStr != nil {
 		userID, _ = uuid.Parse(uidStr.(string))
 	}
 
-	result, err := h.Svc.List(role.(string), userID, limit, offset)
+	result, err := h.Svc.List(role, userID, limit, offset)
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	//build paginated response
+
 	resp := map[string]interface{}{
 		"items":  result.Items,
 		"total":  result.Total,
@@ -173,7 +152,7 @@ func (h *OpsRequestHandler) UpdateOpsRequest(c *gin.Context) {
 
 	var input UpdateOpsRequestInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "invalid body")
+		utils.ErrorResponse(c, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
 
@@ -185,41 +164,55 @@ func (h *OpsRequestHandler) UpdateOpsRequest(c *gin.Context) {
 	userID, _ := uuid.Parse(uidStr.(string))
 	role, _ := c.Get("role")
 
-	updated := &models.OpsRequest{}
-	if input.RequestType != "" {
-		updated.RequestType = input.RequestType
-	}
-	if input.ActivityName != "" {
-		updated.ActivityName = input.ActivityName
-	}
-	if input.LeaderName != "" {
-		updated.LeaderName = input.LeaderName
+	//build updates map only with provided fields
+	updates := make(map[string]interface{})
+	if input.LeaderName != nil {
+		updates["leader_name"] = *input.LeaderName
 	}
 	if input.RequestDate != nil {
-		updated.RequestDate = input.RequestDate
+		updates["request_date"] = input.RequestDate
 	}
-	if input.Location != "" {
-		updated.Location = input.Location
+	if input.Location != nil {
+		updates["location"] = *input.Location
 	}
 	if input.Amount != nil {
-		updated.Amount = *input.Amount
+		updates["amount"] = *input.Amount
 	}
-	if input.Description != "" {
-		updated.Description = input.Description
+	if input.Description != nil {
+		updates["description"] = *input.Description
 	}
-	if input.Status != "" {
-		updated.Status = input.Status
+	if input.Status != nil {
+		updates["status"] = *input.Status
+	}
+	//admin only ypdate candidates
+	if input.SiteID != nil {
+		updates["site_id"] = *input.SiteID
+	}
+	if input.RequestTypeID != nil {
+		updates["request_type_id"] = *input.RequestTypeID
+	}
+	if input.ActivityID != nil {
+		updates["activity_id"] = *input.ActivityID
 	}
 
-	if err := h.Svc.UpdateOpsRequest(id, userID, role.(string), updated); err != nil {
-		if err.Error() == "Forbidden" {
-			utils.ErrorResponse(c, http.StatusForbidden, "Forbidden")
+	if len(updates) == 0 {
+		utils.ErrorResponse(c, http.StatusBadRequest, "no fields to update")
+		return
+	}
+
+	if err := h.Svc.UpdateOpsRequest(id, userID, role.(string), updates); err != nil {
+		if errors.Is(err, utils.ErrForbidden) {
+			utils.ErrorResponse(c, http.StatusForbidden, "forbidden")
+			return
+		}
+		if errors.Is(err, utils.ErrNotFound) {
+			utils.ErrorResponse(c, http.StatusNotFound, "not found")
 			return
 		}
 		utils.ErrorResponse(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	utils.SuccessResponse(c, http.StatusOK, "updated", nil)
+	utils.SuccessResponse(c, http.StatusOK, "ok", nil)
 }
 
 // DELETE /ops/:id
@@ -240,12 +233,16 @@ func (h *OpsRequestHandler) DeleteOpsRequest(c *gin.Context) {
 	role, _ := c.Get("role")
 
 	if err := h.Svc.DeleteOpsRequest(id, userID, role.(string)); err != nil {
-		if err.Error() == "Forbidden" {
-			utils.ErrorResponse(c, http.StatusForbidden, "Forbidden")
+		if errors.Is(err, utils.ErrForbidden) {
+			utils.ErrorResponse(c, http.StatusForbidden, "forbidden")
+			return
+		}
+		if errors.Is(err, utils.ErrNotFound) {
+			utils.ErrorResponse(c, http.StatusNotFound, "not found")
 			return
 		}
 		utils.ErrorResponse(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	utils.SuccessResponse(c, http.StatusOK, "deleted", nil)
+	utils.SuccessResponse(c, http.StatusOK, "ok", nil)
 }

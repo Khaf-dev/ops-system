@@ -22,8 +22,7 @@ type App struct {
 // SEtupApp => bootstrap full dependency
 func SetupApp() *App {
 	cfg := config.Load()
-	database.Connect(cfg)
-	db := database.InitDB(cfg)
+	db := database.Connect(cfg)
 
 	limiter := utils.NewLoginLimiter(5, time.Minute*5, time.Minute*15)
 	limiter.StartCleanup(time.Minute)
@@ -31,17 +30,33 @@ func SetupApp() *App {
 	r := gin.Default()
 	r.Use(middleware.CORS())
 
-	authSvc := services.NewAuthService(db, cfg)
-	authH := handlers.NewAuthHandler(db, authSvc, cfg)
-
+	// repositori
 	opsRepo := repository.NewOpsRequestRepository(db)
+	attachmentRepo := repository.NewAttachmentRepository(db)
+	userRepo := repository.NewUserRepository(db)
+	approvalRepo := repository.NewApprovalRepository(db)
+	reqTypeRepo := repository.NewRequestTypeRepository(database.DB)
+	levelRepo := repository.NewLevelRepository(db)
+
+	// service
+	authSvc := services.NewAuthService(db, cfg)
 	opsSvc := services.NewOpsRequestService(opsRepo)
-	opsH := handlers.NewOpsRequestHandler(opsSvc)
+	attachmentSvc := services.NewAttachmentService(attachmentRepo)
+	approvalSvc := services.NewApprovalService(db, opsRepo, approvalRepo, userRepo, reqTypeRepo)
+	adminSvc := services.NewAdminService(userRepo, levelRepo, reqTypeRepo)
+	reqTypeSvc := services.NewRequestTypeService(reqTypeRepo)
+	levelSvc := services.NewLevelService(levelRepo)
+	userSvc := services.NewUserService(userRepo)
 
-	approvalSvc := services.NewApprovalService(db)
+	// handler
+	authH := handlers.NewAuthHandler(db, authSvc, cfg)
+	opsH := handlers.NewOpsRequestHandler(opsSvc, approvalSvc)
+	attachmentHandler := handlers.NewAttachmentHandler(attachmentSvc)
 	approvalH := handlers.NewApprovalHandler(approvalSvc)
+	adminH := handlers.NewAdminHandler(adminSvc, levelSvc, userSvc)
+	adminReqTypeHandler := handlers.NewAdminRequestTypeHandler(reqTypeSvc)
 
-	router.Register(r, cfg, authH, opsH, approvalH)
+	router.Register(r, cfg, authH, opsH, approvalH, adminH, attachmentHandler, adminReqTypeHandler)
 
 	return &App{
 		Config: cfg,
