@@ -7,4 +7,5 @@ type RequestType struct {
 	Name              string    `json:"name"`
 	IsActive          bool      `json:"is_active"`
 	RequiredLevelRank int       `gorm:"default:1" json:"required_level_rank"`
+	// TODO : buat MinApprovalLevel
 }

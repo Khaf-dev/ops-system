@@ -115,10 +115,10 @@ func (h *OpsRequestHandler) ListOpsRequest(c *gin.Context) {
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
 	uidStr, _ := c.Get("user_id")
-	roleRaw, _ := c.Get("role")
+	roleStr, _ := c.Get("role")
 	role := ""
-	if roleRaw != nil {
-		role = roleRaw.(string)
+	if r, ok := roleStr.(string); ok {
+		role = r
 	}
 
 	var userID uuid.UUID

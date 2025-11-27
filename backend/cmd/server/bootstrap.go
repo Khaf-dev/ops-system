@@ -35,16 +35,16 @@ func SetupApp() *App {
 	attachmentRepo := repository.NewAttachmentRepository(db)
 	userRepo := repository.NewUserRepository(db)
 	approvalRepo := repository.NewApprovalRepository(db)
-	reqTypeRepo := repository.NewRequestTypeRepository(database.DB)
+	ReqTypeRepo := repository.NewRequestTypeRepository(db)
 	levelRepo := repository.NewLevelRepository(db)
 
 	// service
 	authSvc := services.NewAuthService(db, cfg)
 	opsSvc := services.NewOpsRequestService(opsRepo)
 	attachmentSvc := services.NewAttachmentService(attachmentRepo)
-	approvalSvc := services.NewApprovalService(db, opsRepo, approvalRepo, userRepo, reqTypeRepo)
-	adminSvc := services.NewAdminService(userRepo, levelRepo, reqTypeRepo)
-	reqTypeSvc := services.NewRequestTypeService(reqTypeRepo)
+	approvalSvc := services.NewApprovalService(db, opsRepo, approvalRepo, userRepo, ReqTypeRepo)
+	adminSvc := services.NewAdminService(userRepo, levelRepo, ReqTypeRepo)
+	reqTypeSvc := services.NewRequestTypeService(ReqTypeRepo)
 	levelSvc := services.NewLevelService(levelRepo)
 	userSvc := services.NewUserService(userRepo)
 

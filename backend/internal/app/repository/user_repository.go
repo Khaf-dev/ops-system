@@ -31,9 +31,17 @@ func (r *UserRepository) FindByEmail(email string) (*models.User, error) {
 	return &user, nil
 }
 
+func (r *UserRepository) ListAll() ([]models.User, error) {
+	var users []models.User
+	err := r.DB.Find(&users).Error
+	if err != nil {
+		return nil, err
+	}
+	return users, nil
+}
+
 func (r *UserRepository) AssignLevel(userID uuid.UUID, levelID uuid.UUID) error {
 	ul := models.UserLevel{
-		ID:      uuid.New(),
 		UserID:  userID,
 		LevelID: levelID,
 	}
@@ -42,6 +50,10 @@ func (r *UserRepository) AssignLevel(userID uuid.UUID, levelID uuid.UUID) error 
 
 func (r *UserRepository) RemoveLevel(userID uuid.UUID, levelID uuid.UUID) error {
 	return r.DB.Delete(&models.UserLevel{}, "user_id = ? AND level_id = ?", userID, levelID).Error
+}
+
+func (r *UserRepository) RemoveAllLevels(userID uuid.UUID) error {
+	return r.DB.Delete(&models.UserLevel{}, "id = ?", userID).Error
 }
 
 func (r *UserRepository) GetUserLevels(userID uuid.UUID) ([]models.UserLevel, error) {
@@ -54,4 +66,20 @@ func (r *UserRepository) GetUserLevels(userID uuid.UUID) ([]models.UserLevel, er
 		return nil, err
 	}
 	return levels, nil
+}
+
+func (r *UserRepository) FindUsersByLevel(levelID uuid.UUID) ([]models.User, error) {
+	var users []models.User
+
+	err := r.DB.
+		Table("users").
+		Select("users.*").
+		Joins("JOIN user_levels ul ON ul.user_id = users.id").
+		Where("ul.level_id = ?", levelID).
+		Find(&users).Error
+
+	if err != nil {
+		return nil, err
+	}
+	return users, nil
 }

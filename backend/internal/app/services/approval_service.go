@@ -16,27 +16,17 @@ type ApprovalService struct {
 	DB           *gorm.DB
 	ReqRepo      *repository.OpsRequestRepository
 	ApprovalRepo *repository.ApprovalRepository
+	LevelRepo    *repository.LevelRepository
+	UserRepo     *repository.UserRepository
 }
 
-type ApprovalLogic struct {
-	UserRepo        *repository.UserRepository
-	RequestTypeRepo *repository.RequestTypeRepository
-	LevelRepo       *repository.LevelRepository
-}
-
-func NewApprovalLogic(u *repository.UserRepository, rt *repository.RequestTypeRepository, l *repository.LevelRepository) *ApprovalLogic {
-	return &ApprovalLogic{
-		UserRepo:        u,
-		RequestTypeRepo: rt,
-		LevelRepo:       l,
-	}
-}
-
-func NewApprovalService(db *gorm.DB, reqRepo *repository.OpsRequestRepository, approvalRepo *repository.ApprovalRepository) *ApprovalService {
+func NewApprovalService(db *gorm.DB, reqRepo *repository.OpsRequestRepository, approvalRepo *repository.ApprovalRepository, lr *repository.LevelRepository, ur *repository.UserRepository) *ApprovalService {
 	return &ApprovalService{
 		DB:           db,
 		ReqRepo:      reqRepo,
 		ApprovalRepo: approvalRepo,
+		LevelRepo:    lr,
+		UserRepo:     ur,
 	}
 }
 
@@ -167,47 +157,4 @@ func (s *ApprovalService) HandleApproval(requestID, approverID uuid.UUID, decisi
 
 		return nil
 	})
-}
-
-func (s *ApprovalLogic) DetermineApprovers(request *models.OpsRequest) ([]models.User, error) {
-	if request == nil {
-		return nil, errors.New("request nil")
-	}
-	rt, err := a.RequestTypeRepo.GetByID(request.RequestTypeID)
-	if err != nil {
-		return nil, err
-	}
-	requiredRank := rt.RequiredLevelRank
-	// find levels with rank >= requiredRank
-	levels, err := a.LevelRepo.FindByMinRank(requiredRank)
-	if err != nil {
-		return nil, err
-	}
-	if len(levels) == 0 {
-		return nil, err
-	}
-	userIDs := make([]uuid.UUID, 0)
-	for _, l := range levels {
-		uls, err := a.UserRepo.FindUsersByLevel(l.ID)
-		if err != nil {
-			return nil, err
-		}
-		for _, u := range uls {
-			userIDs = append(userIDs, u.ID)
-		}
-	}
-	// dedupe & load users
-	uniq := map[uuid.UUID]bool{}
-	users := make([]models.User, 0)
-	for _, uid := range userIDs {
-		if uniq[uid] {
-			continue
-		}
-		uniq[uid] = true
-		u, err := a.UserRepo.FindByID(uid)
-		if err == nil {
-			users = append(users, *u)
-		}
-	}
-	return users, nil
 }

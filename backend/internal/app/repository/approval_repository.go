@@ -26,3 +26,7 @@ func (r *ApprovalRepository) ListByRequest(requestID uuid.UUID) ([]models.Approv
 	}
 	return list, nil
 }
+
+func (r *ApprovalRepository) BulkInsert(items []models.Approval) error {
+	return r.DB.Create(&items).Error
+}

@@ -86,7 +86,7 @@ func (s *OpsRequestService) CreateOpsRequest(req *models.OpsRequest) (*dto.OpsRe
 		return nil, errors.New("request_date is required")
 	}
 	if req.Amount < 0 {
-		return nil, errors.New("amount must be greater than 0")
+		return nil, errors.New("amount must be zero")
 	}
 
 	req.Status = "pending"
@@ -160,6 +160,8 @@ func (s *OpsRequestService) UpdateOpsRequest(id uuid.UUID, userID uuid.UUID, rol
 	}
 	if v, ok := updates["request_date"].(*time.Time); ok && v != nil {
 		existing.RequestDate = v
+	} else if v2, ok := updates["request_date"].(time.Time); ok {
+		existing.RequestDate = &v2
 	}
 	if v, ok := updates["location"].(string); ok {
 		existing.Location = v

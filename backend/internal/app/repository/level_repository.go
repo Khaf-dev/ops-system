@@ -42,3 +42,16 @@ func (r *LevelRepository) Update(level *models.Level) error {
 func (r *LevelRepository) Delete(id uuid.UUID) error {
 	return r.DB.Delete(&models.Level{}, "id = ?", id).Error
 }
+
+// APPROVAL LOGICa -> cari level rank >= requiredRank
+func (r *LevelRepository) FindByMinRank(requiredRank int) ([]models.Level, error) {
+	var levels []models.Level
+	err := r.DB.
+		Where("rank >= ?", requiredRank).
+		Order("rank desc").
+		Find(&levels).Error
+	if err != nil {
+		return nil, err
+	}
+	return levels, nil
+}
