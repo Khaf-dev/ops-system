@@ -18,7 +18,7 @@ func NewLevelService(repo *repository.LevelRepository) *LevelService {
 
 func (s *LevelService) Create(level *models.Level) (*models.Level, error) {
 	if level.Name == "" {
-		return nil, utils.NewBadRequest("name required")
+		return nil, utils.NewBadRequest
 	}
 	if level.Rank <= 0 {
 		level.Rank = 1

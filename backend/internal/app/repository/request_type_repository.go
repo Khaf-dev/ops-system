@@ -40,3 +40,7 @@ func (r *RequestTypeRepository) ListAll() ([]models.RequestType, error) {
 func (r *RequestTypeRepository) Update(rt *models.RequestType) error {
 	return r.DB.Save(rt).Error
 }
+
+func (r *RequestTypeRepository) SetActive() error {
+	return r.DB.Error // <== TODO : PLEASE FIX THIS BEFORE YOU USE THIS CODES!!!
+}

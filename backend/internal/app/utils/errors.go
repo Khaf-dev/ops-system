@@ -3,6 +3,7 @@ package utils
 import "errors"
 
 var (
-	ErrNotFound  = errors.New("not found")
-	ErrForbidden = errors.New("forbidden")
+	ErrNotFound   = errors.New("not found")
+	ErrForbidden  = errors.New("forbidden")
+	NewBadRequest = errors.New("name required")
 )

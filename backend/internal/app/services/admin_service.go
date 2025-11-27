@@ -54,7 +54,7 @@ func (s *AdminService) ListRequestTypes() ([]models.RequestType, error) {
 // For small admin endpoints like create request type
 func (s *AdminService) CreateRequestType(r *models.RequestType) (*models.RequestType, error) {
 	if r.Name == "" {
-		return nil, utils.NewBadRequest("name required")
+		return nil, utils.NewBadRequest
 	}
 	if r.RequiredLevelRank <= 0 {
 		r.RequiredLevelRank = 1
