@@ -1,6 +1,7 @@
 package services
 
 import (
+	"backend/internal/app/logic"
 	"backend/internal/app/models"
 	"backend/internal/app/repository"
 	"backend/internal/app/utils"
@@ -16,15 +17,26 @@ type ApprovalService struct {
 	DB           *gorm.DB
 	ReqRepo      *repository.OpsRequestRepository
 	ApprovalRepo *repository.ApprovalRepository
+	approverRepo repository.ApproverConfigRepository
+	Logic        *logic.ApprovalLogic
 	LevelRepo    *repository.LevelRepository
 	UserRepo     *repository.UserRepository
 }
 
-func NewApprovalService(db *gorm.DB, reqRepo *repository.OpsRequestRepository, approvalRepo *repository.ApprovalRepository, lr *repository.LevelRepository, ur *repository.UserRepository) *ApprovalService {
+func NewApprovalService(
+	db *gorm.DB,
+	reqRepo *repository.OpsRequestRepository,
+	approvalRepo *repository.ApprovalRepository,
+	lr *repository.LevelRepository,
+	ur *repository.UserRepository,
+	approverRepo repository.ApproverConfigRepository,
+	logic *logic.ApprovalLogic) *ApprovalService {
 	return &ApprovalService{
 		DB:           db,
 		ReqRepo:      reqRepo,
 		ApprovalRepo: approvalRepo,
+		approverRepo: approverRepo,
+		Logic:        logic,
 		LevelRepo:    lr,
 		UserRepo:     ur,
 	}
@@ -157,4 +169,55 @@ func (s *ApprovalService) HandleApproval(requestID, approverID uuid.UUID, decisi
 
 		return nil
 	})
+}
+
+func (s *ApprovalService) ApproveOrReject(reqID uuid.UUID, userID uuid.UUID, action string, role string) error {
+
+	// ---1. Ambil request
+	req, err := s.ReqRepo.GetByID(reqID)
+	if err != nil {
+		return err
+	}
+
+	// ---2. Cek apakah user authorized buat approve (level sesuai)
+	if req.CurrentApproverID != userID {
+		return errors.New("maaf kamu bukan approver aktif")
+	}
+
+	// ---3. Ambil config approver sesuai tipe request
+	cfg, err := s.ApproverRepo.GetConfigs(req.RequestTypeID)
+	if err != nil {
+		return err
+	}
+
+	// ---4. Cek last approver
+	isLast := s.Logic.IsLastApprover(req, cfg)
+
+	// ---5. Tentukan final status setelah action
+	finalStatus, err := s.Logic.DetermineFinalStatus(action, isLast)
+	if err != nil {
+		return err
+	}
+
+	// ---6. Update info approver selanjutnya (jika masih lanjut)
+	if action == "approver" && !isLast {
+		nextUser, err := s.Logic.DetermineNextApprovers(req, cfg)
+		if err != nil {
+			return err
+		}
+		req.CurrentApproverID = nextUser.ID
+		req.CurrentApprovalLevel++
+	}
+
+	// ---7. Kalau reject -selesai
+	if action == "reject" {
+		req.CurrentApproverID = 0
+		req.CurrentApprovalLevel = 0
+	}
+
+	// ---8. Update status final
+	req.Status = finalStatus
+
+	// ---9. Save ke DB
+	return s.ReqRepo.Update(req)
 }

@@ -3,96 +3,75 @@ package logic
 import (
 	"backend/internal/app/models"
 	"errors"
+	"sort"
+
+	"github.com/google/uuid"
 )
 
 type ApprovalLogic struct{}
-
-/*
-
-	Determine Approvers :
-	Mendefisinikan terkait dengan logika bisnis
-	Menggerakkan sistem yang tidak terkait dengan Database dan Modul lainnya
-
-	Determine Approvers:
-	requester : ngambil request dari user
-	reqType : object dari table request_type
-	userLevel : assign level (manager, admin, requester)
-	Levels : detect object ke setiap level
-	users : semua users
-
-*/
 
 func NewApprovalLogic() *ApprovalLogic {
 	return &ApprovalLogic{}
 }
 
-func (l *ApprovalLogic) DetermineApprovers(
-	requester *models.User,
-	reqType *models.RequestType,
-	userLevel *models.UserLevel,
-	allLevels []models.Level,
-	allUsers []models.User,
-) ([]models.User, error) {
+// MAIN LOGIC menentukan approver selanjutnya
+func (l *ApprovalLogic) DetermineNextApprover(
+	req *models.OpsRequest,
+	cfg []models.ApproverConfig,
+) (uuid.UUID, bool, error) {
 
-	if requester == nil || reqType == nil || userLevel == nil {
-		return nil, errors.New("invalid request input for approval logic")
+	if len(cfg) == 0 {
+		return uuid.Nil, false, errors.New("approved config is null")
 	}
 
-	// == 1 : ambil minimum approval lecel dari request type
-	minLevel := reqType.MinApprovalLevel // <== TODO (Liat di models/request_type.go)
-	if minLevel == 0 {
-		minLevel = userLevel.Order + 1
-	}
+	// sort ascending berdasarkan level
+	sort.Slice(cfg, func(i, j int) bool {
+		return cfg[i].Level < cfg[j].Level
+	})
 
-	// == 2 : tentukan level approver
-	var approvalLevels []models.Level
-	for _, lvl := range allLevels {
-		if lvl.Order >= minLevel {
-			approvalLevels = append(approvalLevels, lvl)
+	// cari posisi idx sekarang
+	currentIdx := -1
+	for i, c := range cfg {
+		if c.Level == req.CurrentApprovalLevel {
+			currentIdx = i
 		}
 	}
 
-	if len(approvalLevels) == 0 {
-		return nil, errors.New("no valid approval level found")
-	}
-
-	// == 3 : Cari user yang levelnya match approval level
-	var approvers []models.User
-	for _, apprLvl := range approvalLevels {
-		for _, usr := range allUsers {
-			if usr.LevelID == apprLvl.ID {
-				approvers = append(approvers, usr)
-			}
+	// belum mulai approval -> cari level paling kecil
+	if currentIdx == -1 {
+		first := cfg[0] // karena sudah sorted
+		if first.UserID == uuid.Nil {
+			return uuid.Nil, false, errors.New("config level pertama tidak punya UserID")
 		}
+		return first.UserID, len(cfg) == 1, nil
 	}
 
-	if len(approvers) == 0 {
-		return nil, errors.New("no approver found for levels")
+	// sudah paling akhir? berarti selesai
+	if currentIdx == len(cfg)-1 {
+		return uuid.Nil, true, nil
 	}
-	return approvers, nil
 
+	next := cfg[currentIdx+1]
+	if next.UserID == uuid.Nil {
+		return uuid.Nil, false, errors.New("config level berikut tanpa UserID")
+	}
+
+	isLast := currentIdx+1 == len(cfg)-1
+
+	return next.UserID, isLast, nil
 }
 
-// DetermineNextApprovers
-func (l *ApprovalLogic) DetermineNextApprovers(req *models.OpsRequest, approvers []models.ApproverConfig) (*models.User, error) {
-	// Untuk cari position approver
-	currentIdx := 1
-	for i, a := range approvers {
-		if a.Level == req.CurrentApprovalLevel {
-			currentIdx = i
-			break
+// FINAL STATUS
+func (l *ApprovalLogic) DetermineFinalStatus(action string, isLast bool) (string, error) {
+	switch action {
+	case "approver":
+		if isLast {
+			return "APPROVED", nil
 		}
+		return "IN_REVIEW", nil
+	case "reject":
+		return "REJECTED", nil
+	default:
+		return "", errors.New("invalid action")
 	}
-
-	// Klo currentIndex -1 artinya request belum mulai approval
-	if currentIdx == -1 {
-		//ambil approver level 1
-		for _, a := range approvers {
-			if a.Level == 1 {
-				return &a.User, nil
-			}
-		}
-		return nil, errors.New("tidak menemukan approver level pertama")
-	}
-
 }
