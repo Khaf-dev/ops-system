@@ -4,74 +4,88 @@ import (
 	"backend/internal/app/models"
 	"errors"
 	"sort"
+	"time"
 
 	"github.com/google/uuid"
 )
 
+// ApprovalLogic contains pure business rules (no DB)
 type ApprovalLogic struct{}
 
 func NewApprovalLogic() *ApprovalLogic {
 	return &ApprovalLogic{}
 }
 
-// MAIN LOGIC menentukan approver selanjutnya
-func (l *ApprovalLogic) DetermineNextApprover(
-	req *models.OpsRequest,
-	cfg []models.ApproverConfig,
-) (uuid.UUID, bool, error) {
-
+// BuildStepsFromConfigs converts approver configs into ordered ApprovalStep slice
+func (l *ApprovalLogic) BuildStepsFromConfigs(cfg []models.ApproverConfig) ([]models.ApprovalStep, error) {
 	if len(cfg) == 0 {
-		return uuid.Nil, false, errors.New("approved config is null")
+		return nil, errors.New("no approver configs")
 	}
-
-	// sort ascending berdasarkan level
-	sort.Slice(cfg, func(i, j int) bool {
+	// sort by level then priority
+	sort.SliceStable(cfg, func(i, j int) bool {
+		if cfg[i].Level == cfg[j].Level {
+			return cfg[i].Priority < cfg[j].Priority
+		}
 		return cfg[i].Level < cfg[j].Level
 	})
 
-	// cari posisi idx sekarang
-	currentIdx := -1
-	for i, c := range cfg {
-		if c.Level == req.CurrentApprovalLevel {
-			currentIdx = i
+	steps := make([]models.ApprovalStep, 0)
+	currentLevel := -1
+	stepNumber := 0
+
+	for _, c := range cfg {
+		//increment stepNumber when encountering new level
+		if c.Level != currentLevel {
+			currentLevel = c.Level
+			stepNumber++
 		}
-	}
-
-	// belum mulai approval -> cari level paling kecil
-	if currentIdx == -1 {
-		first := cfg[0] // karena sudah sorted
-		if first.UserID == uuid.Nil {
-			return uuid.Nil, false, errors.New("config level pertama tidak punya UserID")
+		s := models.ApprovalStep{
+			StepNumber: stepNumber,
+			Mode:       c.Mode,
 		}
-		return first.UserID, len(cfg) == 1, nil
+		if c.UserID != nil {
+			uid := *c.UserID
+			s.UserID = &uid
+		}
+		if c.GroupName != "" {
+			s.GroupName = c.GroupName
+		}
+		steps = append(steps, s)
 	}
-
-	// sudah paling akhir? berarti selesai
-	if currentIdx == len(cfg)-1 {
-		return uuid.Nil, true, nil
+	// ensure steps have consecutive numbers staring 1..N
+	for i := range steps {
+		steps[i].StepNumber = i + 1
+		steps[i].CreatedAt = time.Now()
 	}
-
-	next := cfg[currentIdx+1]
-	if next.UserID == uuid.Nil {
-		return uuid.Nil, false, errors.New("config level berikut tanpa UserID")
-	}
-
-	isLast := currentIdx+1 == len(cfg)-1
-
-	return next.UserID, isLast, nil
+	return steps, nil
 }
 
-// FINAL STATUS
-func (l *ApprovalLogic) DetermineFinalStatus(action string, isLast bool) (string, error) {
-	switch action {
-	case "approver":
-		if isLast {
-			return "APPROVED", nil
-		}
-		return "IN_REVIEW", nil
-	case "reject":
-		return "REJECTED", nil
-	default:
-		return "", errors.New("invalid action")
+// DetermineNextStepNumber returns next step number (or 0 if none)
+func (l *ApprovalLogic) DetermineNextStepNumber(flow *models.ApprovalFlow) int {
+	total := len(flow.Steps)
+	if total == 0 {
+		return 0
 	}
+	if flow.CurrentStep < total {
+		return flow.CurrentStep + 1
+	}
+	return 0
+}
+
+// IsLastStep checks if current step is last
+func (l *ApprovalLogic) IsLastStep(flow *models.ApprovalFlow) bool {
+	return flow.CurrentStep >= len(flow.Steps)
+}
+
+// ValidateApproverForStep checks if userID is allowed to act on step
+// For simple mapping, allow if step.UserID == userID or step.GroupName non-empty (caller must then validate group membership)
+func (l *ApprovalLogic) ValidateApproverForStep(step *models.ApprovalStep, userID uuid.UUID) bool {
+	if step.UserID != nil && *step.UserID == userID {
+		return true
+	}
+	// group based check will be handled at service layer (DB)
+	if step.GroupName != "" {
+		return true
+	}
+	return false
 }

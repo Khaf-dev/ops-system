@@ -12,212 +12,276 @@ import (
 	"gorm.io/gorm"
 )
 
-// ApprovalService handles approval logic (multi-level)
+// ApprovalService orchestrates flow + steps + logs
 type ApprovalService struct {
-	DB           *gorm.DB
-	ReqRepo      *repository.OpsRequestRepository
-	ApprovalRepo *repository.ApprovalRepository
-	approverRepo repository.ApproverConfigRepository
-	Logic        *logic.ApprovalLogic
-	LevelRepo    *repository.LevelRepository
-	UserRepo     *repository.UserRepository
+	DB         *gorm.DB
+	ReqRepo    *repository.OpsRequestRepository
+	FlowRepo   *repository.ApprovalFlowRepository
+	ConfigRepo *repository.ApproverConfigRepository
+	Logic      *logic.ApprovalLogic
+	UserRepo   *repository.UserRepository // used for group checks if needed
+	LogRepo    *repository.ApprovalLogRepository
+	StepRepo   *repository.ApprovalStepRepository
 }
 
 func NewApprovalService(
 	db *gorm.DB,
 	reqRepo *repository.OpsRequestRepository,
-	approvalRepo *repository.ApprovalRepository,
-	lr *repository.LevelRepository,
-	ur *repository.UserRepository,
-	approverRepo repository.ApproverConfigRepository,
-	logic *logic.ApprovalLogic) *ApprovalService {
+	flowRepo *repository.ApprovalFlowRepository,
+	cfgRepo *repository.ApproverConfigRepository,
+	stepRepo *repository.ApprovalStepRepository,
+	logRepo *repository.ApprovalLogRepository,
+	userRepo *repository.UserRepository,
+	logic *logic.ApprovalLogic,
+) *ApprovalService {
 	return &ApprovalService{
-		DB:           db,
-		ReqRepo:      reqRepo,
-		ApprovalRepo: approvalRepo,
-		approverRepo: approverRepo,
-		Logic:        logic,
-		LevelRepo:    lr,
-		UserRepo:     ur,
+		DB:         db,
+		ReqRepo:    reqRepo,
+		FlowRepo:   flowRepo,
+		ConfigRepo: cfgRepo,
+		StepRepo:   stepRepo,
+		LogRepo:    logRepo,
+		UserRepo:   userRepo,
+		Logic:      logic,
 	}
 }
 
-// HandleApproval: transactional. decision = "approved" or "rejected"
-func (s *ApprovalService) HandleApproval(requestID, approverID uuid.UUID, decision, notes string, actedAt time.Time) error {
-	if decision != "approved" && decision != "rejected" {
-		return errors.New("invalid decision")
+// StartFlow build approval-steps from configs and persist flow + steps
+func (s *ApprovalService) StartFlow(requestID uuid.UUID, startedBy uuid.UUID) (*models.ApprovalFlow, error) {
+	// load request
+	req, err := s.ReqRepo.GetByID(requestID, "RequestType")
+	if err != nil {
+		return nil, utils.ErrNotFound
+	}
+	if req == nil {
+		return nil, utils.ErrNotFound
+	}
+	if req.RequestTypeID == uuid.Nil {
+		return nil, errors.New("request has no request_type")
 	}
 
+	// get configs
+	cfgs, err := s.ConfigRepo.ListByRequestType(req.RequestTypeID)
+	if err != nil {
+		return nil, err
+	}
+	if len(cfgs) == 0 {
+		return nil, errors.New("no approver configured for this request type")
+	}
+
+	steps, err := s.Logic.BuildStepsFromConfigs(cfgs)
+	if err != nil {
+		return nil, err
+	}
+
+	flow := &models.ApprovalFlow{
+		RequestID:   requestID,
+		CurrentStep: 0, // not started yet
+		Status:      "pending",
+		CreatedByID: &startedBy,
+	}
+
+	err = s.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(flow).Error; err != nil {
+			return err
+		}
+		// assign FlowID to steps and save
+		for i := range steps {
+			steps[i].FlowID = flow.ID
+			if err := tx.Create(&steps[i]).Error; err != nil {
+				return err
+			}
+		}
+		// set flow current = 1 to start first step
+		flow.CurrentStep = 1
+		if err := tx.Save(flow).Error; err != nil {
+			return err
+		}
+		// log
+		if err := tx.Create(&models.ApprovalLog{
+			FlowID:   flow.ID,
+			Action:   "flow_started",
+			ByUserID: &startedBy,
+		}).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	// load flow with steps
+	return s.FlowRepo.GetByID(flow.ID)
+}
+
+// ApproveStep: user approves current step
+func (s *ApprovalService) ApproveStep(flowID, userID uuid.UUID, note string) error {
 	return s.DB.Transaction(func(tx *gorm.DB) error {
-		// load request with relations needed
-		req, err := s.ReqRepo.GetByID(requestID, "RequestType", "Activity", "Approvals")
+		flow, err := s.FlowRepo.GetByID(flowID)
 		if err != nil {
 			return utils.ErrNotFound
 		}
-
-		// check idempotency: an approver should not approve twice
-		var existing models.Approval
-		if err := tx.Where("request_id = ? AND approver_id = ?", requestID, approverID).First(&existing).Error; err == nil {
-			return errors.New("already acted")
+		if flow.Status != "pending" && flow.Status != "in_review" {
+			return errors.New("flow not in approvable state")
 		}
-
-		// determine required rank from request type (fallback to 1)
-		requiredRank := 1
-		if req.RequestType != nil {
-			requiredRank = req.RequestType.RequiredLevelRank
-			if requiredRank <= 0 {
-				requiredRank = 1
+		// find current step
+		var current *models.ApprovalStep
+		for i := range flow.Steps {
+			if flow.Steps[i].StepNumber == flow.CurrentStep {
+				current = &flow.Steps[i]
+				break
 			}
 		}
-
-		// fetch approver's highest rank (you need a user_levels table)
-		type rankRow struct {
-			Rank int
+		if current == nil {
+			return errors.New("no current step")
 		}
-		var rr rankRow
-		// safe SQL to get the highest rank of approver
-		if err := tx.Raw(`
-			SELECT MAX(l.rank) as rank
-			FROM levels l
-			JOIN user_levels ul ON ul.level_id = l.id
-			WHERE ul.user_id = ?
-		`, approverID).Scan(&rr).Error; err != nil {
+		// validate approver (user matches or group membership -- here we check user mmatch, group check done  via UserRepo if needed)
+		if !s.Logic.ValidateApproverForStep(*current, userID) {
+			// if step is group-based we should validate membership; try group validation (UserRepo must implement HasGroup)
+			if current.GroupName != "" {
+				ok, err := s.UserRepo.IsUserInGroup(userID, current.GroupName)
+				if err != nil {
+					return err
+				}
+				if !ok {
+					return errors.New("user not authorized for this step")
+				}
+			} else {
+				return errors.New("user not authorized for this step")
+			}
+		}
+		// update step
+		now := time.Now()
+		current.Status = "approved"
+		current.ApprovedAt = &now
+		current.Notes = note
+		if err := tx.Save(current).Error; err != nil {
 			return err
 		}
-		if rr.Rank == 0 {
-			return errors.New("approver has no level assigned")
-		}
-
-		// approver must have rank >=  required minimal rank to act
-		// (business rule: you can allow lower rank to approve earlier steps; adapt as needed)
-		// Here we require approver rank >=  requiredRank (for simplicity)
-		if rr.Rank < requiredRank {
-			return errors.New("insufficient approval level")
-		}
-
-		// create approval record
-		a := &models.Approval{
-			ID:         uuid.New(),
-			RequestID:  requestID,
-			ApproverID: approverID,
-			Decision:   decision,
-			Notes:      notes,
-			CreatedAt:  actedAt,
-		}
-		if err := tx.Create(a).Error; err != nil {
+		// create log
+		if err := tx.Create(&models.ApprovalLog{
+			FlowID:   flow.ID,
+			StepID:   &current.ID,
+			Action:   "step_approved",
+			ByUserID: &userID,
+			Note:     note,
+		}).Error; err != nil {
 			return err
 		}
 
-		// if decision == rejected => immediately mark request rejected
-		if decision == "rejected" {
-			req.Status = "rejected"
-			req.ApprovedByID = &approverID
+		// decide next step
+		next := s.Logic.DetermineNextStepNumber(flow)
+		if next == 0 {
+			// last -> finalize
+			flow.Status = "approved"
+			flow.CurrentStep = len(flow.Steps)
+			if err := tx.Save(flow).Error; err != nil {
+				return err
+			}
+			// write ops_request: mark approved + aproved_by
+			req, err := s.ReqRepo.GetByID(flow.RequestID, "")
+			if err != nil {
+				return err
+			}
+			req.Status = "approved"
+			req.ApprovedByID = &userID
 			req.UpdatedAt = time.Now()
 			if err := tx.Save(req).Error; err != nil {
 				return err
 			}
 			// log
-			if err := tx.Create(&models.ActivityLog{
-				ID:         uuid.New(),
-				ActorID:    approverID,
-				Action:     "approval_rejected",
-				TargetType: "ops_request",
-				TargetID:   &requestID,
-				CreatedAt:  time.Now(),
+			if err := tx.Create(&models.ApprovalLog{
+				FlowID:   flow.ID,
+				Action:   "flow_approved",
+				ByUserID: &userID,
+				Note:     "",
 			}).Error; err != nil {
 				return err
 			}
 			return nil
 		}
-
-		// For "approved": evaluate whether this completes the approval chain.
-		// Simple rule: if approver rank >= highest required rank for this request type => finalize approved.
-		// (This is conservative; adapt to your exact multi-step rules)
-		// Determine max required rank from request type (we used requiredRank)
-		// If approver's rank is >= requiredRank => mark approved.
-		if rr.Rank >= requiredRank {
-			req.Status = "approved"
-			req.ApprovedByID = &approverID
-			req.UpdatedAt = time.Now()
-			if err := tx.Save(req).Error; err != nil {
-				return err
-			}
-			// activity log
-			if err := tx.Create(&models.ActivityLog{
-				ID:         uuid.New(),
-				ActorID:    approverID,
-				Action:     "approval_approved",
-				TargetType: "ops_request",
-				TargetID:   &requestID,
-				CreatedAt:  time.Now(),
-			}).Error; err != nil {
-				return err
-			}
-		} else {
-			// partial approval: still pending but record inserted (status stays pending)
-			if err := tx.Create(&models.ActivityLog{
-				ID:         uuid.New(),
-				ActorID:    approverID,
-				Action:     "approval_partial",
-				TargetType: "ops_request",
-				TargetID:   &requestID,
-				CreatedAt:  time.Now(),
-			}).Error; err != nil {
-				return err
-			}
+		// move to next step
+		flow.CurrentStep = next
+		flow.Status = "in_review"
+		if err := tx.Save(flow).Error; err != nil {
+			return err
 		}
-
+		// log transition
+		if err := tx.Create(&models.ApprovalLog{
+			FlowID:   flow.ID,
+			Action:   "moved_to_next_step",
+			ByUserID: &userID,
+			Note:     "",
+		}).Error; err != nil {
+			return err
+		}
 		return nil
 	})
 }
 
-func (s *ApprovalService) ApproveOrReject(reqID uuid.UUID, userID uuid.UUID, action string, role string) error {
-
-	// ---1. Ambil request
-	req, err := s.ReqRepo.GetByID(reqID)
-	if err != nil {
-		return err
-	}
-
-	// ---2. Cek apakah user authorized buat approve (level sesuai)
-	if req.CurrentApproverID != userID {
-		return errors.New("maaf kamu bukan approver aktif")
-	}
-
-	// ---3. Ambil config approver sesuai tipe request
-	cfg, err := s.ApproverRepo.GetConfigs(req.RequestTypeID)
-	if err != nil {
-		return err
-	}
-
-	// ---4. Cek last approver
-	isLast := s.Logic.IsLastApprover(req, cfg)
-
-	// ---5. Tentukan final status setelah action
-	finalStatus, err := s.Logic.DetermineFinalStatus(action, isLast)
-	if err != nil {
-		return err
-	}
-
-	// ---6. Update info approver selanjutnya (jika masih lanjut)
-	if action == "approver" && !isLast {
-		nextUser, err := s.Logic.DetermineNextApprovers(req, cfg)
+// RejectStep: user rejects flow (terminal)
+func (s *ApprovalService) RejectStep(flowID, userID uuid.UUID, reason string) error {
+	return s.DB.Transaction(func(tx *gorm.DB) error {
+		flow, err := s.FlowRepo.GetByID(flowID)
+		if err != nil {
+			return utils.ErrNotFound
+		}
+		// find current step
+		var current *models.ApprovalStep
+		for i := range flow.Steps {
+			if flow.Steps[i].StepNumber == flow.CurrentStep {
+				current = &flow.Steps[i]
+				break
+			}
+		}
+		if current == nil {
+			return errors.New("no current step")
+		}
+		// valodate approver
+		if !s.Logic.ValidateApproverForStep(*current, userID) {
+			if current.GroupName != "" {
+				ok, err := s.UserRepo.IsUserInGroup(userID, current.GroupName)
+				if err != nil {
+					return err
+				}
+				if !ok {
+					return errors.New("user not authorized for this step")
+				}
+			} else {
+				return errors.New("user not authorized for this step")
+			}
+		}
+		now := time.Now()
+		current.Status = "rejected"
+		current.ApprovedAt = &now
+		current.Notes = reason
+		if err := tx.Save(current).Error; err != nil {
+			return err
+		}
+		flow.Status = "rejected"
+		if err := tx.Save(flow).Error; err != nil {
+			return err
+		}
+		// update ops_request
+		req, err := s.ReqRepo.GetByID(flow.RequestID, "")
 		if err != nil {
 			return err
 		}
-		req.CurrentApproverID = nextUser.ID
-		req.CurrentApprovalLevel++
-	}
-
-	// ---7. Kalau reject -selesai
-	if action == "reject" {
-		req.CurrentApproverID = 0
-		req.CurrentApprovalLevel = 0
-	}
-
-	// ---8. Update status final
-	req.Status = finalStatus
-
-	// ---9. Save ke DB
-	return s.ReqRepo.Update(req)
+		req.Status = "rejected"
+		req.UpdatedAt = time.Now()
+		if err := tx.Save(req).Error; err != nil {
+			return err
+		}
+		// log
+		if err := tx.Create(&models.ApprovalLog{
+			FlowID:   flow.ID,
+			StepID:   &current.ID,
+			Action:   "step_rejected",
+			ByUserID: &userID,
+			Note:     reason,
+		}).Error; err != nil {
+			return err
+		}
+		return nil
+	})
 }
