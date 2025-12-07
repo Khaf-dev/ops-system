@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	constants "backend/internal/app/constant"
+	"backend/internal/app/dto"
 	"backend/internal/app/models"
 	"backend/internal/app/services"
 	"backend/internal/app/utils"
@@ -40,7 +42,7 @@ type UpdateOpsRequestInput struct {
 	Location      *string    `json:"location"`
 	Amount        *float64   `json:"amount"`
 	Description   *string    `json:"description"`
-	Status        *string    `json:"status"` // only admin can set status
+	Status        *string    `json:"status"`
 	SiteID        *uuid.UUID `json:"site_id"`
 	RequestTypeID *uuid.UUID `json:"request_type_id"`
 	ActivityID    *uuid.UUID `json:"activity_id"`
@@ -59,11 +61,7 @@ func (h *OpsRequestHandler) CreateOpsRequest(c *gin.Context) {
 		utils.ErrorResponse(c, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	requesterID, err := uuid.Parse(uidStr.(string))
-	if err != nil {
-		utils.ErrorResponse(c, http.StatusBadRequest, "invalid user id")
-		return
-	}
+	requesterID, _ := uuid.Parse(uidStr.(string))
 
 	req := &models.OpsRequest{
 		RequesterID:   requesterID,
@@ -89,13 +87,13 @@ func (h *OpsRequestHandler) CreateOpsRequest(c *gin.Context) {
 }
 
 // GET /ops/:id
-func (h *OpsRequestHandler) GetOpsByRequestByID(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := uuid.Parse(idStr)
+func (h *OpsRequestHandler) GetOpsRequestByID(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, "invalid id")
 		return
 	}
+
 	dtoObj, err := h.Svc.GetByIDDTO(id)
 	if err != nil {
 		if errors.Is(err, utils.ErrNotFound) {
@@ -105,25 +103,26 @@ func (h *OpsRequestHandler) GetOpsByRequestByID(c *gin.Context) {
 		utils.ErrorResponse(c, http.StatusInternalServerError, err.Error())
 		return
 	}
+
 	utils.SuccessResponse(c, http.StatusOK, "ok", dtoObj)
 }
 
-// GET /ops -> role based: admin -> all, user -> own
+// GET /ops
 func (h *OpsRequestHandler) ListOpsRequest(c *gin.Context) {
-	//parse pagination
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
 	uidStr, _ := c.Get("user_id")
 	roleStr, _ := c.Get("role")
-	role := ""
-	if r, ok := roleStr.(string); ok {
-		role = r
-	}
 
 	var userID uuid.UUID
 	if uidStr != nil {
 		userID, _ = uuid.Parse(uidStr.(string))
+	}
+
+	role := ""
+	if r, ok := roleStr.(string); ok {
+		role = r
 	}
 
 	result, err := h.Svc.List(role, userID, limit, offset)
@@ -132,23 +131,20 @@ func (h *OpsRequestHandler) ListOpsRequest(c *gin.Context) {
 		return
 	}
 
-	resp := map[string]interface{}{
-		"items":  result.Items,
-		"total":  result.Total,
-		"limit":  limit,
-		"offset": offset,
-	}
-	utils.SuccessResponse(c, http.StatusOK, "ok", resp)
+	utils.SuccessResponse(c, http.StatusOK, "ok", result)
 }
 
 // PUT /ops/:id
 func (h *OpsRequestHandler) UpdateOpsRequest(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := uuid.Parse(idStr)
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, "invalid id")
 		return
 	}
+
+	uidStr, _ := c.Get("user_id")
+	userID, _ := uuid.Parse(uidStr.(string))
+	role, _ := c.Get("role")
 
 	var input UpdateOpsRequestInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -156,51 +152,26 @@ func (h *OpsRequestHandler) UpdateOpsRequest(c *gin.Context) {
 		return
 	}
 
-	uidStr, ok := c.Get("user_id")
-	if !ok {
-		utils.ErrorResponse(c, http.StatusUnauthorized, "unauthorized")
-		return
+	// Convert input → DTO
+	dtoInput := dto.UpdateOpsRequest{
+		LeaderName:    input.LeaderName,
+		RequestDate:   input.RequestDate,
+		Location:      input.Location,
+		Amount:        input.Amount,
+		Description:   input.Description,
+		SiteID:        input.SiteID,
+		RequestTypeID: input.RequestTypeID,
+		ActivityID:    input.ActivityID,
 	}
-	userID, _ := uuid.Parse(uidStr.(string))
-	role, _ := c.Get("role")
 
-	//build updates map only with provided fields
-	updates := make(map[string]interface{})
-	if input.LeaderName != nil {
-		updates["leader_name"] = *input.LeaderName
-	}
-	if input.RequestDate != nil {
-		updates["request_date"] = input.RequestDate
-	}
-	if input.Location != nil {
-		updates["location"] = *input.Location
-	}
-	if input.Amount != nil {
-		updates["amount"] = *input.Amount
-	}
-	if input.Description != nil {
-		updates["description"] = *input.Description
-	}
+	// Parse status ke typed constant
 	if input.Status != nil {
-		updates["status"] = *input.Status
-	}
-	//admin only ypdate candidates
-	if input.SiteID != nil {
-		updates["site_id"] = *input.SiteID
-	}
-	if input.RequestTypeID != nil {
-		updates["request_type_id"] = *input.RequestTypeID
-	}
-	if input.ActivityID != nil {
-		updates["activity_id"] = *input.ActivityID
+		st := constants.RequestStatus(*input.Status)
+		dtoInput.Status = &st
 	}
 
-	if len(updates) == 0 {
-		utils.ErrorResponse(c, http.StatusBadRequest, "no fields to update")
-		return
-	}
-
-	if err := h.Svc.UpdateOpsRequest(id, userID, role.(string), updates); err != nil {
+	err = h.Svc.UpdateOpsRequest(id, userID, role.(string), dtoInput)
+	if err != nil {
 		if errors.Is(err, utils.ErrForbidden) {
 			utils.ErrorResponse(c, http.StatusForbidden, "forbidden")
 			return
@@ -212,23 +183,19 @@ func (h *OpsRequestHandler) UpdateOpsRequest(c *gin.Context) {
 		utils.ErrorResponse(c, http.StatusInternalServerError, err.Error())
 		return
 	}
+
 	utils.SuccessResponse(c, http.StatusOK, "ok", nil)
 }
 
 // DELETE /ops/:id
 func (h *OpsRequestHandler) DeleteOpsRequest(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := uuid.Parse(idStr)
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		utils.ErrorResponse(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 
-	uidStr, ok := c.Get("user_id")
-	if !ok {
-		utils.ErrorResponse(c, http.StatusUnauthorized, "unauthorized")
-		return
-	}
+	uidStr, _ := c.Get("user_id")
 	userID, _ := uuid.Parse(uidStr.(string))
 	role, _ := c.Get("role")
 
@@ -244,5 +211,6 @@ func (h *OpsRequestHandler) DeleteOpsRequest(c *gin.Context) {
 		utils.ErrorResponse(c, http.StatusInternalServerError, err.Error())
 		return
 	}
+
 	utils.SuccessResponse(c, http.StatusOK, "ok", nil)
 }

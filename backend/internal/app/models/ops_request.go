@@ -1,7 +1,7 @@
 package models
 
 import (
-	"backend/internal/app/constant"
+	constants "backend/internal/app/constant"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,12 +21,12 @@ type OpsRequest struct {
 	RequestTypeID uuid.UUID `gorm:"type:uuid;not null;index" json:"request_type_id"` // Jenis Pengajuan
 	ActivityID    uuid.UUID `gorm:"type:uuid;not null;index" json:"activity_id"`     // Jenis Kegiatan
 
-	LeaderName  string                 `gorm:"size:150" json:"leader_name,omitempty"`
-	RequestDate *time.Time             `gorm:"column:request_date" json:"request_date,omitempty"` // Tanggal Field
-	Location    string                 `gorm:"size:255" json:"location,omitempty"`
-	Amount      float64                `gorm:"type:numeric(12,2)" json:"amount"`
-	Description string                 `gorm:"type:text" json:"description,omitempty"`
-	Status      constant.RequestStatus `gorm:"type:varchar(20);default:pending" json:"status"`
+	LeaderName  string                  `gorm:"size:150" json:"leader_name,omitempty"`
+	RequestDate *time.Time              `gorm:"column:request_date" json:"request_date,omitempty"` // Tanggal Field
+	Location    string                  `gorm:"size:255" json:"location,omitempty"`
+	Amount      float64                 `gorm:"type:numeric(12,2)" json:"amount"`
+	Description string                  `gorm:"type:text" json:"description,omitempty"`
+	Status      constants.RequestStatus `gorm:"type:varchar(20);default:pending" json:"status"`
 
 	ApprovedByID         *uuid.UUID `gorm:"type:uuid" json:"approved_by_id,omitempty"`
 	CurrentApproverID    *uuid.UUID `gorm:"type:uuid" json:"current_approver_id,omitempty"`

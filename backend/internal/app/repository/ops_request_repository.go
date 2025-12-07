@@ -7,7 +7,7 @@ import (
 	"gorm.io/gorm"
 )
 
-type PageResult[T any] struct {
+type PagedResult[T any] struct {
 	Items   []T   `json:"items"`
 	Total   int64 `json:"total"`
 	Limit   int   `json:"limit"`
@@ -23,9 +23,9 @@ func NewOpsRequestRepository(db *gorm.DB) *OpsRequestRepository {
 	return &OpsRequestRepository{DB: db}
 }
 
-// -------- PRELOAD HELPERS -------- //
+// ---------- PRELOADS ---------- //
 
-var opsRequestPreloads = []string{
+var defaultOpsRequestPreloads = []string{
 	"Requester",
 	"Site",
 	"RequestType",
@@ -34,42 +34,32 @@ var opsRequestPreloads = []string{
 	"Attachments",
 }
 
-func applyPreloads(q *gorm.DB, preloads []string) *gorm.DB {
+func preloadAll(q *gorm.DB, preloads []string) *gorm.DB {
 	for _, p := range preloads {
 		q = q.Preload(p)
 	}
 	return q
 }
 
-// -------- CRUD -------- //
+// ---------- CRUD ---------- //
 
 func (r *OpsRequestRepository) Create(req *models.OpsRequest) error {
-	return r.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(req).Error; err != nil {
-			return err
-		}
-		return nil
-	})
+	return r.DB.Create(req).Error
 }
 
 func (r *OpsRequestRepository) Update(req *models.OpsRequest) error {
-	return r.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Save(req).Error; err != nil {
-			return err
-		}
-		return nil
-	})
+	return r.DB.Save(req).Error
 }
 
 func (r *OpsRequestRepository) GetByID(id uuid.UUID, preload ...string) (*models.OpsRequest, error) {
 	var req models.OpsRequest
 
-	q := r.DB.Model(&models.OpsRequest{})
+	finalPreloads := defaultOpsRequestPreloads
 	if len(preload) > 0 {
-		q = applyPreloads(q, preload)
-	} else {
-		q = applyPreloads(q, opsRequestPreloads)
+		finalPreloads = preload
 	}
+
+	q := preloadAll(r.DB.Model(&models.OpsRequest{}), finalPreloads)
 
 	if err := q.First(&req, "id = ?", id).Error; err != nil {
 		return nil, err
@@ -77,36 +67,42 @@ func (r *OpsRequestRepository) GetByID(id uuid.UUID, preload ...string) (*models
 	return &req, nil
 }
 
-// -------- LIST FUNCTIONS -------- //
-func (r *OpsRequestRepository) ListAll(limit, offset int) (*PageResult[models.OpsRequest], error) {
-	if limit <= 0 {
-		limit = 20
+// ---------- PAGINATION HELP ---------- //
+
+func ensurePaging(limit, offset *int) {
+	if *limit <= 0 {
+		*limit = 20
 	}
-	if offset < 0 {
-		offset = 0
+	if *offset < 0 {
+		*offset = 0
 	}
+}
+
+// ---------- LIST ---------- //
+
+func (r *OpsRequestRepository) ListAll(limit, offset int) (*PagedResult[models.OpsRequest], error) {
+	ensurePaging(&limit, &offset)
 
 	var (
 		list  []models.OpsRequest
 		total int64
 	)
 
-	// Consistent query
-	query := r.DB.Model(&models.OpsRequest{})
-	if err := query.Count(&total).Error; err != nil {
+	q := r.DB.Model(&models.OpsRequest{})
+
+	if err := q.Count(&total).Error; err != nil {
 		return nil, err
 	}
 
-	q := applyPreloads(query, opsRequestPreloads).
+	if err := preloadAll(q, defaultOpsRequestPreloads).
 		Order("created_at DESC").
 		Limit(limit).
-		Offset(offset)
-
-	if err := q.Find(&list).Error; err != nil {
+		Offset(offset).
+		Find(&list).Error; err != nil {
 		return nil, err
 	}
 
-	return &PageResult[models.OpsRequest]{
+	return &PagedResult[models.OpsRequest]{
 		Items:   list,
 		Total:   total,
 		Limit:   limit,
@@ -115,36 +111,30 @@ func (r *OpsRequestRepository) ListAll(limit, offset int) (*PageResult[models.Op
 	}, nil
 }
 
-func (r *OpsRequestRepository) ListByRequester(userID uuid.UUID, limit, offset int) (*PageResult[models.OpsRequest], error) {
-	if limit <= 0 {
-		limit = 20
-	}
-	if offset < 0 {
-		offset = 0
-	}
+func (r *OpsRequestRepository) ListByRequester(userID uuid.UUID, limit, offset int) (*PagedResult[models.OpsRequest], error) {
+	ensurePaging(&limit, &offset)
 
 	var (
 		list  []models.OpsRequest
 		total int64
 	)
 
-	query := r.DB.Model(&models.OpsRequest{}).
+	q := r.DB.Model(&models.OpsRequest{}).
 		Where("requester_id = ?", userID)
 
-	if err := query.Count(&total).Error; err != nil {
+	if err := q.Count(&total).Error; err != nil {
 		return nil, err
 	}
 
-	q := applyPreloads(query, opsRequestPreloads).
+	if err := preloadAll(q, defaultOpsRequestPreloads).
 		Order("created_at DESC").
 		Limit(limit).
-		Offset(offset)
-
-	if err := q.Find(&list).Error; err != nil {
+		Offset(offset).
+		Find(&list).Error; err != nil {
 		return nil, err
 	}
 
-	return &PageResult[models.OpsRequest]{
+	return &PagedResult[models.OpsRequest]{
 		Items:   list,
 		Total:   total,
 		Limit:   limit,
@@ -153,16 +143,15 @@ func (r *OpsRequestRepository) ListByRequester(userID uuid.UUID, limit, offset i
 	}, nil
 }
 
-// -------- DELETE -------- //
+// ---------- DELETE ---------- //
+
 func (r *OpsRequestRepository) Delete(id uuid.UUID) error {
 	res := r.DB.Delete(&models.OpsRequest{}, "id = ?", id)
-
 	if res.Error != nil {
 		return res.Error
 	}
 	if res.RowsAffected == 0 {
 		return gorm.ErrRecordNotFound
 	}
-
 	return nil
 }
