@@ -1,7 +1,7 @@
 package services
 
 import (
-	constants "backend/internal/app/constant"
+	constants "backend/internal/app/constants"
 	"backend/internal/app/dto"
 	"backend/internal/app/models"
 	"backend/internal/app/repository"

@@ -1,6 +1,7 @@
 package models
 
 import (
+	"backend/internal/app/constants"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,12 +14,12 @@ type ApprovalFlow struct {
 	//Current step number (1..N)
 	CurrentStep int `gorm:"default:0" json:"current_step"`
 	//Status : Pending / in_review / approved / rejected / cancelled
-	Status      string     `gorm:"size:32;default:'pending'" json:"status"`
-	CreatedByID *uuid.UUID `gorm:"type:uuid" json:"created_by,omitempty"`
-	CreatedAt   time.Time  `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt   time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
+	Status      constants.RequestStatus `gorm:"size:32;default:'pending'" json:"status"`
+	CreatedByID *uuid.UUID              `gorm:"type:uuid" json:"created_by,omitempty"`
+	CreatedAt   time.Time               `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt   time.Time               `gorm:"autoUpdateTime" json:"updated_at"`
 
 	//relations
-	Request *OpsRequest    `gorm:"foreignKey:RequestID" json:"request,omitempty"`
+	Request *OpsRequest    `gorm:"foreignKey:RequestID;constraint:OnDelete:CASCADE" json:"request,omitempty"`
 	Steps   []ApprovalStep `gorm:"foreignKey:FlowID;constraint:OnDelete:CASCADE" json:"step,omitempty"`
 }

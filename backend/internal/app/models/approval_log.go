@@ -17,5 +17,6 @@ type ApprovalLog struct {
 	CreatedAt time.Time  `gorm:"autoCreateTime" json:"created_at"`
 
 	//relations
-	Flow *ApprovalFlow `gorm:"foreignKey:FlowID" json:"flow,omitempty"`
+	Flow *ApprovalFlow `gorm:"foreignKey:FlowID;constraint:OnDelete:CASCADE" json:"flow,omitempty"`
+	Step *ApprovalStep `gorm:"foreignKey:StepID" json:"step,omitempty"`
 }

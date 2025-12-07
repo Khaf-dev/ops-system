@@ -1,7 +1,7 @@
 package models
 
 import (
-	constants "backend/internal/app/constant"
+	constants "backend/internal/app/constants"
 	"time"
 
 	"github.com/google/uuid"

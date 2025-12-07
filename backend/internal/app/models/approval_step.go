@@ -1,6 +1,7 @@
 package models
 
 import (
+	"backend/internal/app/constants"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,13 +16,16 @@ type ApprovalStep struct {
 	UserID    *uuid.UUID `gorm:"type:uuid;index" json:"user_id,omitempty"`
 	GroupName string     `gorm:"size:128" json:"group_name,omitempty"`
 	//Mode : "AND" / "OR" (inherited from config)
-	Mode       string     `gorm:"size:10;default:'AND'" json:"mode,omitempty"`
-	Status     string     `gorm:"size:32;default:'pending'" json:"status"`
-	ApprovedAt *time.Time `json:"approved_at,omitempty"`
-	Notes      string     `gorm:"type:text" json:"notes,omitempty"`
-	CreatedAt  time.Time  `gorm:"autoCreateTime" json:"created_at"`
+	Mode       constants.StepMode      `gorm:"size:10;default:'AND'" json:"mode,omitempty"`
+	Status     constants.RequestStatus `gorm:"size:32;default:'pending'" json:"status"`
+	ApprovedAt *time.Time              `json:"approved_at,omitempty"`
+	Notes      string                  `gorm:"type:text" json:"notes,omitempty"`
+	CreatedAt  time.Time               `gorm:"autoCreateTime" json:"created_at"`
 
 	//relations
-	Flow *ApprovalFlow `gorm:"foreignKey:FlowID" json:"flow,omitempty"`
-	User *User         `gorm:"foreignKey:UserID" json:"user,omitempty"`
+	Flow *ApprovalFlow `gorm:"foreignKey:FlowID;constraint:OnDelete:CASCADE" json:"flow,omitempty"`
+	User *User         `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"user,omitempty"`
 }
+
+// ensure unique constraint (FlowID + StepNumber)
+func (ApprovalStep) TableName() string { return "approval_steps" }
