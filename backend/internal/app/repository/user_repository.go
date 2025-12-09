@@ -2,6 +2,7 @@ package repository
 
 import (
 	"backend/internal/app/models"
+	"errors"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -82,4 +83,43 @@ func (r *UserRepository) FindUsersByLevel(levelID uuid.UUID) ([]models.User, err
 		return nil, err
 	}
 	return users, nil
+}
+
+// IsUserInGroup ini itu akan mengembalikan nilai true klo misalkan user sesuai dengan nama grup nye.
+// Implementasi try user_groups table first; fallback to users.role == groupName
+func (r *UserRepository) IsUserInGroup(userID uuid.UUID, groupName string) (bool, error) {
+	// 1. Try user_groups table (kalo ada nih)
+	type row struct {
+		Count int64
+	}
+
+	var res row
+	err := r.DB.
+		Table("user_groups").
+		Where("user_id = ? AND group_name = ?", userID, groupName).
+		Count(&res.Count).Error
+
+	if err == nil {
+		return res.Count > 0, nil
+	}
+
+	// klo table nya gaada atau DB nya error. fallback to checking users.role
+	// if its a true DB schema issu, returning error might be ddesirable, but fallback gives resilience
+	if errors.Is(err, gorm.ErrInvalidDB) || err != nil {
+		// fallback : check users.role
+		var user models.User
+		if err2 := r.DB.Select("role").First(&user, "id = ?", userID).Error; err2 != nil {
+			if errors.Is(err2, gorm.ErrRecordNotFound) {
+				return false, nil
+			}
+			return false, err2
+		}
+		if user.Role == groupName {
+			return true, nil
+		}
+		// klo gaada di grup
+		return false, nil
+	}
+	// if user_groups returned some other error, bubble up
+	return false, err
 }

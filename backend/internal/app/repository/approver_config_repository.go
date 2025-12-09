@@ -19,11 +19,8 @@ func NewApproverConfigRepository(db *gorm.DB) *ApproverConfigRepository {
 // ListByRequestType returns configs ordered by level, priority and preloads User & RequestType
 func (r *ApproverConfigRepository) ListByRequestType(requestTypeID uuid.UUID) ([]models.ApproverConfig, error) {
 	var cfgs []models.ApproverConfig
-	if err := r.DB.
-		Where("request_type_id = ?", requestTypeID).
-		Order("level ASC, priority ASC").
-		Preload("User").
-		Preload("RequestTypeObj").
+	if err := r.DB.Where("request_type_id = ?", requestTypeID).
+		Order("level ASC. priorty ASC").
 		Find(&cfgs).Error; err != nil {
 		return nil, err
 	}
