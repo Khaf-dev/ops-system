@@ -137,7 +137,7 @@ func (s *ApprovalService) ApproveStep(flowID, userID uuid.UUID, note string) err
 			return errors.New("no current step")
 		}
 		// validate approver (user matches or group membership -- here we check user mmatch, group check done  via UserRepo if needed)
-		if !s.Logic.ValidateApproverForStep(*current, userID) {
+		if !s.Logic.ValidateApproverForStep(current, userID) {
 			// if step is group-based we should validate membership; try group validation (UserRepo must implement HasGroup)
 			if current.GroupName != "" {
 				ok, err := s.UserRepo.IsUserInGroup(userID, current.GroupName)
@@ -239,7 +239,7 @@ func (s *ApprovalService) RejectStep(flowID, userID uuid.UUID, reason string) er
 			return errors.New("no current step")
 		}
 		// valodate approver
-		if !s.Logic.ValidateApproverForStep(*current, userID) {
+		if !s.Logic.ValidateApproverForStep(current, userID) {
 			if current.GroupName != "" {
 				ok, err := s.UserRepo.IsUserInGroup(userID, current.GroupName)
 				if err != nil {

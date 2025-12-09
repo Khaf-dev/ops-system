@@ -3,6 +3,7 @@ package repository
 import (
 	"backend/internal/app/models"
 	"errors"
+	"strings"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -53,16 +54,13 @@ func (r *UserRepository) RemoveLevel(userID uuid.UUID, levelID uuid.UUID) error 
 	return r.DB.Delete(&models.UserLevel{}, "user_id = ? AND level_id = ?", userID, levelID).Error
 }
 
-func (r *UserRepository) RemoveAllLevels(userID uuid.UUID) error {
-	return r.DB.Delete(&models.UserLevel{}, "id = ?", userID).Error
-}
-
 func (r *UserRepository) GetUserLevels(userID uuid.UUID) ([]models.UserLevel, error) {
 	var levels []models.UserLevel
+	// join levels to order by rank
 	if err := r.DB.Preload("Level").
-		Where("user_id = ?", userID).
-		Order("levels.priority ASC").
-		Joins("JOIN levels ON levels.id = user_levels.level_id").
+		Joins("JOIN levels ON levels_id = user_levels.level_id").
+		Where("user_levels.user_id = ?", userID).
+		Order("levels.rank ASC").
 		Find(&levels).Error; err != nil {
 		return nil, err
 	}
@@ -85,41 +83,30 @@ func (r *UserRepository) FindUsersByLevel(levelID uuid.UUID) ([]models.User, err
 	return users, nil
 }
 
-// IsUserInGroup ini itu akan mengembalikan nilai true klo misalkan user sesuai dengan nama grup nye.
-// Implementasi try user_groups table first; fallback to users.role == groupName
 func (r *UserRepository) IsUserInGroup(userID uuid.UUID, groupName string) (bool, error) {
-	// 1. Try user_groups table (kalo ada nih)
-	type row struct {
+	type cntRow struct {
 		Count int64
 	}
-
-	var res row
-	err := r.DB.
-		Table("user_groups").
+	var cr cntRow
+	err := r.DB.Table("user_groups").
 		Where("user_id = ? AND group_name = ?", userID, groupName).
-		Count(&res.Count).Error
-
+		Count(&cr.Count).Error
 	if err == nil {
-		return res.Count > 0, nil
+		return cr.Count > 0, nil
 	}
 
-	// klo table nya gaada atau DB nya error. fallback to checking users.role
-	// if its a true DB schema issu, returning error might be ddesirable, but fallback gives resilience
-	if errors.Is(err, gorm.ErrInvalidDB) || err != nil {
-		// fallback : check users.role
-		var user models.User
-		if err2 := r.DB.Select("role").First(&user, "id = ?", userID).Error; err2 != nil {
+	// if error indicates missing relation or other schema issue, fallback to role check
+	// best efforts : check error string for "does not exist"
+	if strings.Contains(strings.ToLower(err.Error()), "does not exist") || strings.Contains(strings.ToLower(err.Error()), "undefined_table") {
+		// fallback : check user's role
+		var u models.User
+		if err2 := r.DB.Select("role").First(&u, "id = ?", userID).Error; err2 != nil {
 			if errors.Is(err2, gorm.ErrRecordNotFound) {
 				return false, nil
 			}
 			return false, err2
 		}
-		if user.Role == groupName {
-			return true, nil
-		}
-		// klo gaada di grup
-		return false, nil
+		return u.Role == groupName, nil
 	}
-	// if user_groups returned some other error, bubble up
 	return false, err
 }

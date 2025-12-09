@@ -103,30 +103,52 @@ func (r *ApprovalFlowRepository) UpdateStatus(flowID uuid.UUID, status string) e
 
 // MoveSteps (NEW CODE)
 func (r *ApprovalFlowRepository) MoveToStep(flowID uuid.UUID, nextStep int) error {
-	return r.DB.Model(&models.ApprovalFlow{}).
+	res := r.DB.Model(&models.ApprovalFlow{}).
 		Where("id = ?", flowID).
 		Updates(map[string]interface{}{
-			"current_step": nextStep,
-			"status":       "in_review",
-			"updated_at":   time.Now(),
-		}).Error
+			"curret_step": nextStep,
+			"status":      "in_review",
+			"updated_at":  time.Now(),
+		})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 func (r *ApprovalFlowRepository) MarkApproved(flowID uuid.UUID) error {
-	return r.DB.Model(&models.ApprovalFlow{}).
-		Where("id = ?", flowID).
-		Updates(map[string]interface{}{
-			"current_step": gorm.Expr("GREATEST(current_step, (SELECT COUNT(*) FROM approval_steps WHERE flow_id = ?))", flowID),
-			"status":       "approved",
-			"updated_at":   time.Now(),
-		}).Error
+	// set current_step to number of steps and status approved
+	res := r.DB.Exec(`
+		UPDATE approval_flows
+		SET current_step = GREATEST(current_step, (SELECT COALESCE(COUNT(1),0) FROM approval_steps WHERE flow_id = ?)),
+			status = ?,
+			updated_at = ?
+		WHERE id = ?
+		`, flowID, "approved", time.Now(), flowID)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 func (r *ApprovalFlowRepository) MarkRejected(flowID uuid.UUID) error {
-	return r.DB.Model(&models.ApprovalFlow{}).
+	res := r.DB.Model(&models.ApprovalFlow{}).
 		Where("id = ?", flowID).
 		Updates(map[string]interface{}{
 			"status":     "rejected",
 			"updated_at": time.Now(),
-		}).Error
+		})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }

@@ -20,7 +20,10 @@ func NewApproverConfigRepository(db *gorm.DB) *ApproverConfigRepository {
 func (r *ApproverConfigRepository) ListByRequestType(requestTypeID uuid.UUID) ([]models.ApproverConfig, error) {
 	var cfgs []models.ApproverConfig
 	if err := r.DB.Where("request_type_id = ?", requestTypeID).
-		Order("level ASC. priorty ASC").
+		Order("level ASC.").
+		Order("priority ASC").
+		Preload("User").
+		Preload("RequestTypeObj").
 		Find(&cfgs).Error; err != nil {
 		return nil, err
 	}

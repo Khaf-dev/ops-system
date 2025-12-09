@@ -35,7 +35,7 @@ func (s *AdminService) SetUserLevels(userID uuid.UUID, levelIDs []uuid.UUID) err
 		return utils.ErrNotFound
 	}
 	// naively remove all and add new (repo should implement helpers)
-	if err := s.UserRepo.RemoveAllLevels(userID); err != nil {
+	if err := s.UserRepo.RemoveLevel(userID, levelIDs[]); err != nil {
 		return err
 	}
 	for _, lid := range levelIDs {
