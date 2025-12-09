@@ -13,6 +13,7 @@ import (
 )
 
 // ApprovalService orchestrates flow + steps + logs
+// Approval Service ini fungsinya adalah User action : approve/reject
 type ApprovalService struct {
 	DB         *gorm.DB
 	ReqRepo    *repository.OpsRequestRepository

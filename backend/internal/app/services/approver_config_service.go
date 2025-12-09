@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 )
 
+// Approval Config Service ini fungsi nya untuk Admin Configuration
 type ApprovalConfigService struct {
 	Repo *repository.ApproverConfigRepository
 }
@@ -16,7 +17,7 @@ func NewApprovalConfigService(repo *repository.ApproverConfigRepository) *Approv
 }
 
 func (s *ApprovalConfigService) GetByType(typeID uuid.UUID) ([]models.ApproverConfig, error) {
-	return s.Repo.GetConfigs(typeID)
+	return s.Repo.ListByRequestType(typeID)
 }
 
 func (s *ApprovalConfigService) Create(cfg *models.ApproverConfig) error {

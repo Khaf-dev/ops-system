@@ -2,6 +2,7 @@ package repository
 
 import (
 	"backend/internal/app/models"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -154,4 +155,26 @@ func (r *OpsRequestRepository) Delete(id uuid.UUID) error {
 		return gorm.ErrRecordNotFound
 	}
 	return nil
+}
+
+// ---------- MARK ---------- //
+func (r *OpsRequestRepository) MarkApproved(reqID uuid.UUID, approverID uuid.UUID, finalAt time.Time) error {
+	return r.DB.Model(&models.OpsRequest{}).
+		Where("id = ?", reqID).
+		Updates(map[string]interface{}{
+			"status":            "approved",
+			"approved_by_id":    approverID,
+			"final_approved_at": finalAt,
+			"updated_at":        time.Now(),
+		}).Error
+}
+
+func (r *OpsRequestRepository) MarkRejected(reqID uuid.UUID, by uuid.UUID) error {
+	return r.DB.Model(&models.OpsRequest{}).
+		Where("id = ?", reqID).
+		Updates(map[string]interface{}{
+			"status":         "rejected",
+			"approved_by_id": by,
+			"updated_at":     time.Now(),
+		}).Error
 }

@@ -1,7 +1,7 @@
 CREATE TABLE approval_configs (
-    id BIGSERIAL PRIMARY KEY,
-    request_type_id BIGINT NOT NULL,
-    user_id BIGINT NOT NULL,
+    id UUID PRIMARY KEY,
+    request_type_id UUID NOT NULL,
+    user_id UUID NOT NULL,
     level INT NOT NULL,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),

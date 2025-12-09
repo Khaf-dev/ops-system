@@ -25,6 +25,6 @@ type ApproverConfig struct {
 	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 
 	//relations (optional)
-	RequestTypeObj *RequestType `gorm:"foreignKey:RequestTypeID;reference:ID" json:"request_type,omitempty"`
+	RequestTypeObj *RequestType `gorm:"foreignKey:RequestTypeID;references:ID" json:"request_type,omitempty"`
 	User           *User        `gorm:"foreignKey:UserID" json:"user,omitempty"`
 }
