@@ -12,7 +12,7 @@ type ApprovalFlow struct {
 	ID        uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
 	RequestID uuid.UUID `gorm:"type:uuid;not null;uniqueIndex" json:"request_id"`
 	//Current step number (1..N)
-	CurrentStep int `gorm:"default:0" json:"current_step"`
+	CurrentStep int `gorm:"default:1" json:"current_step"`
 	//Status : Pending / in_review / approved / rejected / cancelled
 	Status      constants.RequestStatus `gorm:"size:32;default:'pending'" json:"status"`
 	CreatedByID *uuid.UUID              `gorm:"type:uuid" json:"created_by,omitempty"`
@@ -21,5 +21,5 @@ type ApprovalFlow struct {
 
 	//relations
 	Request *OpsRequest    `gorm:"foreignKey:RequestID;constraint:OnDelete:CASCADE" json:"request,omitempty"`
-	Steps   []ApprovalStep `gorm:"foreignKey:FlowID;constraint:OnDelete:CASCADE" json:"step,omitempty"`
+	Steps   []ApprovalStep `gorm:"foreignKey:FlowID;constraint:OnDelete:CASCADE" json:"steps,omitempty"`
 }

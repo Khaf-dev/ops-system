@@ -9,119 +9,85 @@ import (
 )
 
 type ApprovalHandler struct {
-	Service *services.ApprovalService
+	FlowSvc   *services.ApprovalFlowService
+	ActionSvc *services.ApprovalActionService
 }
 
-func NewApprovalHandler(s *services.ApprovalService) *ApprovalHandler {
-	return &ApprovalHandler{Service: s}
+func NewApprovalHandler(
+	flowSvc *services.ApprovalFlowService,
+	actionSvc *services.ApprovalActionService,
+) *ApprovalHandler {
+	return &ApprovalHandler{
+		FlowSvc:   flowSvc,
+		ActionSvc: actionSvc,
+	}
 }
 
-// -----------------------------
-// Start Flow
-// -----------------------------
 func (h *ApprovalHandler) StartFlow(c *gin.Context) {
-	reqIDStr := c.Param("request_id")
-	startedByStr := c.GetString("user_id") // from auth middleware
+	var req struct {
+		RequestID string `json:"request_id" binding:"required,uuid"`
+		UserID    string `json:"user_id" binding:"required,uuid"`
+	}
 
-	requestID, err := uuid.Parse(reqIDStr)
-	if err != nil {
-		utils.ErrorResponse(c, 400, "invalid request_id")
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ErrorResponse(c, 400, err.Error())
 		return
 	}
 
-	startedBy, err := uuid.Parse(startedByStr)
-	if err != nil {
-		utils.ErrorResponse(c, 400, "invalid user_id")
-		return
-	}
+	requestID, _ := uuid.Parse(req.RequestID)
+	userID, _ := uuid.Parse(req.UserID)
 
-	flow, err := h.Service.StartFlow(requestID, startedBy)
+	flow, err := h.FlowSvc.StartFlow(requestID, userID)
 	if err != nil {
 		utils.ErrorResponse(c, 400, err.Error())
 		return
 	}
 
-	utils.SuccessResponse(c, flow)
+	utils.SuccessResponse(c, 200, "flow started", flow)
 }
 
-// -----------------------------
-// Approve Step
-// -----------------------------
-type approveBody struct {
-	Note string `json:"note"`
-}
-
-func (h *ApprovalHandler) ApproveStep(c *gin.Context) {
-	flowIDStr := c.Param("flow_id")
-	userStr := c.GetString("user_id")
-
-	flowID, err := uuid.Parse(flowIDStr)
-	if err != nil {
-		utils.ErrorResponse(c, 400, "invalid flow_id")
-		return
+func (h *ApprovalHandler) Approve(c *gin.Context) {
+	var req struct {
+		FlowID string `json:"flow_id" binding:"required,uuid"`
+		UserID string `json:"user_id" binding:"required,uuid"`
+		Note   string `json:"note"`
 	}
 
-	userID, err := uuid.Parse(userStr)
-	if err != nil {
-		utils.ErrorResponse(c, 400, "invalid user_id")
-		return
-	}
-
-	var body approveBody
-	if err := c.ShouldBindJSON(&body); err != nil {
-		utils.ErrorResponse(c, 400, "invalid body")
-		return
-	}
-
-	err = h.Service.ApproveStep(flowID, userID, body.Note)
-	if err != nil {
+	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.ErrorResponse(c, 400, err.Error())
 		return
 	}
 
-	utils.SuccessResponse(c, gin.H{
-		"flow_id": flowID,
-		"status":  "approved",
-	})
-}
+	flowID, _ := uuid.Parse(req.FlowID)
+	userID, _ := uuid.Parse(req.UserID)
 
-// -----------------------------
-// Reject Step
-// -----------------------------
-type rejectBody struct {
-	Reason string `json:"reason"`
-}
-
-func (h *ApprovalHandler) RejectStep(c *gin.Context) {
-	flowIDStr := c.Param("flow_id")
-	userStr := c.GetString("user_id")
-
-	flowID, err := uuid.Parse(flowIDStr)
-	if err != nil {
-		utils.ErrorResponse(c, 400, "invalid flow_id")
-		return
-	}
-
-	userID, err := uuid.Parse(userStr)
-	if err != nil {
-		utils.ErrorResponse(c, 400, "invalid user_id")
-		return
-	}
-
-	var body rejectBody
-	if err := c.ShouldBindJSON(&body); err != nil {
-		utils.ErrorResponse(c, 400, "invalid body")
-		return
-	}
-
-	err = h.Service.RejectStep(flowID, userID, body.Reason)
-	if err != nil {
+	if err := h.ActionSvc.Approve(flowID, userID, req.Note); err != nil {
 		utils.ErrorResponse(c, 400, err.Error())
 		return
 	}
 
-	utils.SuccessResponse(c, gin.H{
-		"flow_id": flowID,
-		"status":  "rejected",
-	})
+	utils.SuccessResponse(c, 200, "Approved", nil)
+}
+
+func (h *ApprovalHandler) Reject(c *gin.Context) {
+	var req struct {
+		FlowID string `json:"flow_id" binding:"required,uuid"`
+		UserID string `json:"user_id" binding:"required,uuid"`
+		Reason string `json:"reason"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ErrorResponse(c, 400, err.Error())
+		return
+	}
+
+	flowID, _ := uuid.Parse(req.FlowID)
+	userID, _ := uuid.Parse(req.UserID)
+
+	if err := h.ActionSvc.Reject(flowID, userID, req.Reason); err != nil {
+		utils.ErrorResponse(c, 400, err.Error())
+		return
+	}
+
+	utils.SuccessResponse(c, 200, "Rejected", nil)
 }

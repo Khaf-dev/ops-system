@@ -7,23 +7,26 @@ import (
 	"github.com/google/uuid"
 )
 
-// Approval Config Service ini fungsi nya untuk Admin Configuration
-type ApprovalConfigService struct {
+type ApproverConfigService struct {
 	Repo *repository.ApproverConfigRepository
 }
 
-func NewApprovalConfigService(repo *repository.ApproverConfigRepository) *ApprovalConfigService {
-	return &ApprovalConfigService{Repo: repo}
+func NewApproverConfigService(repo *repository.ApproverConfigRepository) *ApproverConfigService {
+	return &ApproverConfigService{Repo: repo}
 }
 
-func (s *ApprovalConfigService) GetByType(typeID uuid.UUID) ([]models.ApproverConfig, error) {
-	return s.Repo.ListByRequestType(typeID)
+func (s *ApproverConfigService) ListByRequestType(requestTypeID uuid.UUID) ([]models.ApproverConfig, error) {
+	return s.Repo.ListByRequestType(requestTypeID)
 }
 
-func (s *ApprovalConfigService) Create(cfg *models.ApproverConfig) error {
+func (s *ApproverConfigService) Create(cfg *models.ApproverConfig) error {
 	return s.Repo.Create(cfg)
 }
 
-func (s *ApprovalConfigService) Delete(typeID uuid.UUID) error {
-	return s.Repo.Delete(typeID)
+func (s *ApproverConfigService) Update(cfg *models.ApproverConfig) error {
+	return s.Repo.Update(cfg)
+}
+
+func (s *ApproverConfigService) Delete(id uuid.UUID) error {
+	return s.Repo.Delete(id)
 }

@@ -3,6 +3,7 @@ package server
 import (
 	"backend/config"
 	"backend/internal/app/handlers"
+	"backend/internal/app/logic"
 	"backend/internal/app/middleware"
 	"backend/internal/app/repository"
 	"backend/internal/app/services"
@@ -30,35 +31,101 @@ func SetupApp() *App {
 	r := gin.Default()
 	r.Use(middleware.CORS())
 
-	// repositori
+	// ==============================================
+	// Repository Layer
+	// ==============================================
 	opsRepo := repository.NewOpsRequestRepository(db)
 	attachmentRepo := repository.NewAttachmentRepository(db)
-	userRepo := repository.NewUserRepository(db)
-	approvalRepo := repository.NewApprovalRepository(db)
-	approverCfgRepo := repository.NewApproverConfigRepository(db)
-	ReqTypeRepo := repository.NewRequestTypeRepository(db)
-	levelRepo := repository.NewLevelRepository(db)
 
-	// service
+	userRepo := repository.NewUserRepository(db)
+	levelRepo := repository.NewLevelRepository(db)
+	reqTypeRepo := repository.NewRequestTypeRepository(db)
+
+	approverCfgRepo := repository.NewApproverConfigRepository(db)
+	approvalFlowRepo := repository.NewApprovalFlowRepository(db)
+	approvalStepRepo := repository.NewApprovalStepRepository(db)
+	approvalLogRepo := repository.NewApprovalLogRepository(db)
+
+	// ==============================================
+	// Logic Layer (pure)
+	// ==============================================
+	approvalLogic := logic.NewApprovalLogic()
+
+	// ==============================================
+	// Service Layer
+	// ==============================================
 	authSvc := services.NewAuthService(db, cfg)
-	opsSvc := services.NewOpsRequestService(opsRepo)
-	attachmentSvc := services.NewAttachmentService(attachmentRepo)
-	approvalSvc := services.NewApprovalService(db, opsRepo, approvalRepo, userRepo, ReqTypeRepo, approvalLogic)
-	approvalLogic := services.NewApprovalLogic(approverCfgRepo, userRepo)
-	adminSvc := services.NewAdminService(userRepo, levelRepo, ReqTypeRepo)
-	reqTypeSvc := services.NewRequestTypeService(ReqTypeRepo)
+
+	opsSvc := services.NewOpsRequestService(
+		opsRepo,
+	)
+
+	attachmentSvc := services.NewAttachmentService(
+		attachmentRepo,
+	)
+	approvalFlowSvc := services.NewApprovalFlowService(
+		db,
+		opsRepo,
+		approvalFlowRepo,
+		approvalStepRepo,
+		approverCfgRepo,
+		approvalLogic,
+	)
+
+	approvalActionSvc := services.NewApprovalActionService(
+		db,
+		approvalFlowRepo,
+		approvalStepRepo,
+		opsRepo,
+		approvalLogRepo,
+		userRepo,
+		approvalLogic,
+	)
+
+	approvalSvc := services.NewApprovalService(
+		db,
+		opsRepo,
+		approvalFlowRepo,
+		approverCfgRepo,
+		approvalStepRepo,
+		approvalLogRepo,
+		userRepo,
+		approvalLogic,
+	)
+
+	adminSvc := services.NewAdminService(
+		userRepo,
+		levelRepo,
+		reqTypeRepo,
+	)
+
+	reqTypeSvc := services.NewRequestTypeService(reqTypeRepo)
 	levelSvc := services.NewLevelService(levelRepo)
 	userSvc := services.NewUserService(userRepo)
 
-	// handler
+	// ==============================================
+	// Handler Layer
+	// ==============================================
 	authH := handlers.NewAuthHandler(db, authSvc, cfg)
-	opsH := handlers.NewOpsRequestHandler(opsSvc, approvalSvc)
-	attachmentHandler := handlers.NewAttachmentHandler(attachmentSvc)
-	approvalH := handlers.NewApprovalHandler(approvalSvc)
+	opsH := handlers.NewOpsRequestHandler(opsSvc)
+	attachmentH := handlers.NewAttachmentHandler(attachmentSvc)
+	approvalH := handlers.NewApprovalHandler(approvalFlowSvc, approvalActionSvc)
 	adminH := handlers.NewAdminHandler(adminSvc, levelSvc, userSvc)
-	adminReqTypeHandler := handlers.NewAdminRequestTypeHandler(reqTypeSvc)
+	adminReqTypeH := handlers.NewAdminRequestTypeHandler(reqTypeSvc)
 
-	router.Register(r, cfg, authH, opsH, approvalH, adminH, attachmentHandler, adminReqTypeHandler)
+	// ==============================================
+	// Router
+	// ==============================================
+	router.Register(
+		r,
+		cfg,
+		authH,
+		opsH,
+		approvalH,
+		attachmentH,
+		adminH,
+		adminReqTypeH,
+	)
 
 	return &App{
 		Config: cfg,

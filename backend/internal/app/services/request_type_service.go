@@ -22,11 +22,11 @@ type RequestTypeService interface {
 }
 
 type requestTypeService struct {
-	repo repository.RequestTypeRepository
+	Repo repository.RequestTypeRepository
 }
 
-func NewRequestTypeService(repo repository.RequestTypeRepository) RequestTypeService {
-	return &requestTypeService{repo: repo}
+func NewRequestTypeService(repo *repository.RequestTypeRepository) RequestTypeService {
+	return &requestTypeService{Repo: *repo}
 }
 
 func (s *requestTypeService) GetAll(ctx context.Context, onlyActive bool) ([]models.RequestType, error) {

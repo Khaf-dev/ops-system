@@ -22,3 +22,5 @@ const (
 	ModeAND StepMode = "AND"
 	ModeOR  StepMode = "OR"
 )
+
+func (s RequestStatus) String() string { return string(s) }
