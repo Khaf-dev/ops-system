@@ -1,6 +1,7 @@
 package logic
 
 import (
+	"backend/internal/app/constants"
 	"backend/internal/app/models"
 	"errors"
 	"sort"
@@ -71,6 +72,30 @@ func (l *ApprovalLogic) ValidateApproverForStep(step *models.ApprovalStep, userI
 	}
 	if step.GroupName != "" {
 		return true // caller must verify group membership
+	}
+	return false
+}
+
+func (l *ApprovalLogic) IsStepCompleted(
+	steps []models.ApprovalStep,
+	mode constants.StepMode,
+) bool {
+	switch mode {
+	case constants.ModeAND:
+		for _, s := range steps {
+			if s.Status != constants.RequestApproved {
+				return false
+			}
+		}
+		return true
+
+	case constants.ModeOR:
+		for _, s := range steps {
+			if s.Status == constants.RequestApproved {
+				return true
+			}
+		}
+		return false
 	}
 	return false
 }
