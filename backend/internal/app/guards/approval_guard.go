@@ -43,7 +43,7 @@ func (g *ApprovalGuard) CanApprove(userID, flowID uuid.UUID) error {
 		return ErrFlowNotActive
 	}
 
-	step, err := g.StepRepo.GetCurrentStep(flow.ID, flow.CurrentStep)
+	step, err := g.StepRepo.GetStepsByStepNumber(flow.ID, flow.CurrentStep)
 	if err != nil || step == nil {
 		return ErrNotCurrentStep
 	}

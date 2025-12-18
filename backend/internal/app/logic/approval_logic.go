@@ -15,9 +15,11 @@ type ApprovalLogic struct{}
 func NewApprovalLogic() *ApprovalLogic { return &ApprovalLogic{} }
 
 func (l *ApprovalLogic) BuildStepsFromConfigs(cfg []models.ApproverConfig) ([]models.ApprovalStep, error) {
+
 	if len(cfg) == 0 {
 		return nil, errors.New("no approver configs")
 	}
+
 	sort.SliceStable(cfg, func(i, j int) bool {
 		if cfg[i].Level == cfg[j].Level {
 			return cfg[i].Priority < cfg[j].Priority
@@ -25,45 +27,55 @@ func (l *ApprovalLogic) BuildStepsFromConfigs(cfg []models.ApproverConfig) ([]mo
 		return cfg[i].Level < cfg[j].Level
 	})
 
-	steps := make([]models.ApprovalStep, 0)
-	currentLevel := -1
-	stepNumber := 0
+	steps := make([]models.ApprovalStep, 0, len(cfg))
 
 	for _, c := range cfg {
-		if c.Level != currentLevel {
-			currentLevel = c.Level
-			stepNumber++
-		}
-		s := models.ApprovalStep{
-			StepNumber: stepNumber,
+		steps = append(steps, models.ApprovalStep{
+			StepNumber: c.Level,
 			Mode:       c.Mode,
 			UserID:     c.UserID,
 			GroupName:  c.GroupName,
+			Status:     constants.RequestPending,
 			CreatedAt:  time.Now(),
-		}
-		steps = append(steps, s)
+		})
 	}
 
-	// normalize step numbers 1..N
-	for i := range steps {
-		steps[i].StepNumber = i + 1
-	}
 	return steps, nil
 }
 
+func (l *ApprovalLogic) MaxStepNumber(steps []models.ApprovalStep) int {
+	max := 0
+	for _, s := range steps {
+		if s.StepNumber > max {
+			max = s.StepNumber
+		}
+	}
+	return max
+}
+
 func (l *ApprovalLogic) IsLastStep(flow *models.ApprovalFlow) bool {
-	return flow.CurrentStep >= len(flow.Steps)
+	maxStep := l.MaxStepNumber(flow.Steps)
+	return flow.CurrentStep >= maxStep
 }
 
 func (l *ApprovalLogic) DetermineNextStepNumber(flow *models.ApprovalFlow) int {
-	total := len(flow.Steps)
-	if total == 0 {
-		return 0
-	}
-	if flow.CurrentStep < total {
+	maxStep := l.MaxStepNumber(flow.Steps)
+
+	if flow.CurrentStep < maxStep {
 		return flow.CurrentStep + 1
 	}
-	return 0
+	return 0 // no next step
+}
+
+func (l *ApprovalLogic) StepsByLevel(steps []models.ApprovalStep, level int) []models.ApprovalStep {
+
+	result := make([]models.ApprovalStep, 0)
+	for _, s := range steps {
+		if s.StepNumber == level {
+			result = append(result, s)
+		}
+	}
+	return result
 }
 
 func (l *ApprovalLogic) ValidateApproverForStep(step *models.ApprovalStep, userID uuid.UUID) bool {
@@ -80,6 +92,7 @@ func (l *ApprovalLogic) IsStepCompleted(
 	steps []models.ApprovalStep,
 	mode constants.StepMode,
 ) bool {
+	
 	switch mode {
 	case constants.ModeAND:
 		for _, s := range steps {

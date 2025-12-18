@@ -6,6 +6,7 @@ import (
 	"backend/internal/app/models"
 	"backend/internal/app/repository"
 	"backend/internal/app/utils"
+	"context"
 	"errors"
 	"time"
 
@@ -45,46 +46,66 @@ func NewApprovalActionService(
 }
 
 // Approve: user approves current step. If last -> finalize flow and ops_request.
-func (s *ApprovalActionService) Approve(flowID, userID uuid.UUID, note string) error {
-	return s.DB.Transaction(func(tx *gorm.DB) error {
+func (s *ApprovalActionService) Approve(
+	ctx context.Context,
+	flowID uuid.UUID,
+	userID uuid.UUID,
+	note string,
+) error {
+
+	return s.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+
+		// ================== load flow ================== //
 		flow, err := s.FlowRepo.GetByID(flowID)
-		if err != nil {
+		if err != nil || flow == nil {
 			return utils.ErrNotFound
 		}
-		if !(flow.Status == constants.RequestStatus(constants.RequestPending.String()) || flow.Status == constants.RequestStatus(constants.RequestInReview.String())) {
+
+		if flow.Status != constants.RequestInReview {
 			return errors.New("flow not in approvable state")
 		}
 
-		// current step
-		current, err := s.StepRepo.GetCurrentStep(flow.ID, flow.CurrentStep)
-		if err != nil {
-			return errors.New("no current step")
+		// ================== load steps (current level) ================== //
+		steps, err := s.StepRepo.GetStepsByStepNumber(flow.ID, flow.CurrentStep)
+		if err != nil || len(steps) == 0 {
+			return errors.New("approval steps not found")
 		}
 
-		// validate approver
-		if !s.Logic.ValidateApproverForStep(current, userID) {
-			if current.GroupName != "" {
-				ok, err := s.UserRepo.IsUserInGroup(userID, current.GroupName)
-				if err != nil {
-					return err
-				}
-				if !ok {
-					return errors.New("user not authorized for this step")
-				}
-			} else {
+		// ================== find user's step ================== //
+		var current *models.ApprovalStep
+		for i := range steps {
+			if s.Logic.ValidateApproverForStep(&steps[i], userID) {
+				current = &steps[i]
+				break
+			}
+		}
+		if current == nil {
+			return errors.New("user not authorized for this step")
+		}
+
+		// ================== group validation ================== //
+		if current.GroupName != "" {
+			ok, err := s.UserRepo.IsUserInGroup(userID, current.GroupName)
+			if err != nil {
+				return err
+			}
+			if !ok {
 				return errors.New("user not authorized for this step")
 			}
 		}
 
 		now := time.Now()
+
+		// ================== APPROVE CURRENT ================== //
 		current.Status = constants.RequestApproved
 		current.ApprovedAt = &now
 		current.Notes = note
+
 		if err := tx.Save(current).Error; err != nil {
 			return err
 		}
 
-		// log step approved
+		// ================== LOG APPROVED ================== //
 		if err := tx.Create(&models.ApprovalLog{
 			ID:        uuid.New(),
 			FlowID:    flow.ID,
@@ -97,125 +118,208 @@ func (s *ApprovalActionService) Approve(flowID, userID uuid.UUID, note string) e
 			return err
 		}
 
-		// determine next step
+		// ================== MODE HANDLING ================== //
+		switch current.Mode {
+
+		// AND MODE //
+		case constants.ModeAND:
+			if !s.Logic.IsStepCompleted(steps, constants.ModeAND) {
+				return nil // masih nunggu approver lain
+			}
+
+			// OR MODE //
+		case constants.ModeOR:
+			for i := range steps {
+				if steps[i].ID == current.ID {
+					continue
+				}
+				if steps[i].Status == constants.RequestApproved {
+					continue
+				}
+
+				steps[i].Status = constants.RequestCanceled
+				steps[i].Notes = "Auto-cancelled due to OR approval"
+				if err := tx.Save(&steps[i]).Error; err != nil {
+					return err
+				}
+
+				// Log cancel
+				if err := tx.Create(&models.ApprovalLog{
+					ID:        uuid.New(),
+					FlowID:    flow.ID,
+					StepID:    &steps[i].ID,
+					Action:    "step_cancelled",
+					ByUserID:  &userID,
+					Note:      "Auto-cancelled due to OR approval",
+					CreatedAt: now,
+				}).Error; err != nil {
+					return err
+				}
+			}
+		}
+
+		// ================== NEXT STEP ================== //
 		next := s.Logic.DetermineNextStepNumber(flow)
 		if next == 0 {
-			// finalize
-			if err := tx.Model(&models.ApprovalFlow{}).Where("id = ?", flow.ID).
-				Updates(map[string]interface{}{"status": constants.RequestApproved.String(), "updated_at": time.Now()}).Error; err != nil {
+			// ==== FINALIZE FLOW ==== //
+			if err := tx.Model(&models.ApprovalFlow{}).Where("id = ?", flow.ID).Updates(map[string]interface{}{
+				"status":     constants.RequestApproved.String(),
+				"updated_at": now,
+			}).Error; err != nil {
 				return err
 			}
-			// update ops_request
-			if err := tx.Model(&models.OpsRequest{}).Where("id = ?", flow.RequestID).
-				Updates(map[string]interface{}{
-					"status":            constants.RequestApproved.String(),
-					"approved_by_id":    userID,
-					"final_approved_at": now,
-					"updated_at":        time.Now(),
-				}).Error; err != nil {
-				return err
-			}
-			// log flow approved
+
 			if err := tx.Create(&models.ApprovalLog{
 				ID:        uuid.New(),
 				FlowID:    flow.ID,
 				Action:    "flow_approved",
 				ByUserID:  &userID,
-				CreatedAt: time.Now(),
+				CreatedAt: now,
 			}).Error; err != nil {
 				return err
 			}
+
 			return nil
 		}
 
-		// move to next step
-		if err := tx.Model(&models.ApprovalFlow{}).Where("id = ?", flow.ID).
-			Updates(map[string]interface{}{"current_step": next, "status": constants.RequestInReview.String(), "updated_at": time.Now()}).Error; err != nil {
+		// ================== MOVE TO NEXT LEVEL ================== //
+		if err := tx.Model(&models.ApprovalFlow{}).Where("id = ?", flow.ID).Updates(map[string]interface{}{
+			"current_step": next,
+			"status":       constants.RequestInReview.String(),
+			"updated_at":   now,
+		}).Error; err != nil {
 			return err
 		}
 
-		// set ops_request.current_approver_id if next step has explicit user
-		nextStep, err := s.StepRepo.GetCurrentStep(flow.ID, next)
-		if err == nil && nextStep != nil && nextStep.UserID != nil {
-			if err := tx.Model(&models.OpsRequest{}).Where("id = ?", flow.RequestID).
-				Updates(map[string]interface{}{"current_approver_id": *nextStep.UserID, "current_approval_level": next, "updated_at": time.Now()}).Error; err != nil {
-				return err
-			}
-		} else {
-			// group-based next step: clear current_approver_id, still increase level
-			if err := tx.Model(&models.OpsRequest{}).Where("id = ?", flow.RequestID).
-				Updates(map[string]interface{}{"current_approver_id": nil, "current_approval_level": next, "updated_at": time.Now()}).Error; err != nil {
-				return err
-			}
-		}
-
-		// log move
 		if err := tx.Create(&models.ApprovalLog{
 			ID:        uuid.New(),
 			FlowID:    flow.ID,
 			Action:    "moved_to_next_step",
 			ByUserID:  &userID,
-			Note:      "",
-			CreatedAt: time.Now(),
+			CreatedAt: now,
 		}).Error; err != nil {
 			return err
 		}
+
 		return nil
 	})
 }
 
 // Reject: user rejects current step (terminal)
-func (s *ApprovalActionService) Reject(flowID, userID uuid.UUID, reason string) error {
-	return s.DB.Transaction(func(tx *gorm.DB) error {
+func (s *ApprovalActionService) Reject(
+	ctx context.Context,
+	flowID uuid.UUID,
+	userID uuid.UUID,
+	reason string,
+) error {
+
+	return s.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+
+		// ================== load flow ================== //
 		flow, err := s.FlowRepo.GetByID(flowID)
-		if err != nil {
+		if err != nil || flow == nil {
 			return utils.ErrNotFound
 		}
 
-		current, err := s.StepRepo.GetCurrentStep(flow.ID, flow.CurrentStep)
-		if err != nil {
-			return errors.New("no current step")
+		if flow.Status != constants.RequestInReview {
+			return errors.New("flow not in rejectable state")
 		}
 
-		// validate approver
-		if !s.Logic.ValidateApproverForStep(current, userID) {
-			if current.GroupName != "" {
-				ok, err := s.UserRepo.IsUserInGroup(userID, current.GroupName)
-				if err != nil {
-					return err
-				}
-				if !ok {
-					return errors.New("user not authorized for this step")
-				}
-			} else {
+		// ================== load steps (current level) ================== //
+		steps, err := s.StepRepo.GetStepsByStepNumber(flow.ID, flow.CurrentStep)
+		if err != nil || len(steps) == 0 {
+			return errors.New("approval steps not found")
+		}
+
+		// ================== find user's step ================== //
+		var current *models.ApprovalStep
+		for i := range steps {
+			if s.Logic.ValidateApproverForStep(&steps[i], userID) {
+				current = &steps[i]
+				break
+			}
+		}
+		if current == nil {
+			return errors.New("user not authorized for this step")
+		}
+
+		// ================== group validation ================== //
+		if current.GroupName != "" {
+			ok, err := s.UserRepo.IsUserInGroup(userID, current.GroupName)
+			if err != nil {
+				return err
+			}
+			if !ok {
 				return errors.New("user not authorized for this step")
 			}
 		}
 
 		now := time.Now()
+
+		// ================== REJECT CURRENT ================== //
 		current.Status = constants.RequestRejected
 		current.ApprovedAt = &now
 		current.Notes = reason
+
 		if err := tx.Save(current).Error; err != nil {
 			return err
 		}
 
-		// update flow + ops_request
-		if err := tx.Model(&models.ApprovalFlow{}).Where("id = ?", flow.ID).
-			Updates(map[string]interface{}{"status": constants.RequestRejected.String(), "updated_at": time.Now()}).Error; err != nil {
-			return err
+		// ================== CANCEL OTHER STEPS (same level) ================== //
+		for i := range steps {
+			if steps[i].ID == current.ID {
+				continue
+			}
+			if steps[i].Status != constants.RequestPending {
+				continue
+			}
+
+			steps[i].Status = constants.RequestCanceled
+			steps[i].Notes = "Cancelled due to rejection in same approval step"
+
+			if err := tx.Save(&steps[i]).Error; err != nil {
+				return err
+			}
+
+			if err := tx.Create(&models.ApprovalLog{
+				ID:        uuid.New(),
+				FlowID:    flow.ID,
+				StepID:    &steps[i].ID,
+				Action:    "step_cancelled",
+				ByUserID:  &userID,
+				Note:      "Cancelled due to rejection in same approval step",
+				CreatedAt: now,
+			}).Error; err != nil {
+				return err
+			}
 		}
-		if err := tx.Model(&models.OpsRequest{}).Where("id = ?", flow.RequestID).
-			Updates(map[string]interface{}{"status": constants.RequestRejected.String(), "updated_at": time.Now()}).Error; err != nil {
+
+		// ================== UPDATE OPS REQUEST ================== //
+		if err := tx.Model(&models.OpsRequest{}).Where("id = ?", flow.RequestID).Updates(map[string]interface{}{
+			"status":     constants.RequestRejected.String(),
+			"updated_at": now,
+		}).Error; err != nil {
 			return err
 		}
 
-		// log reject
+		// ================== LOG REJECT ================== //
 		if err := tx.Create(&models.ApprovalLog{
 			ID:        uuid.New(),
 			FlowID:    flow.ID,
 			StepID:    &current.ID,
 			Action:    "step_rejected",
+			ByUserID:  &userID,
+			Note:      reason,
+			CreatedAt: now,
+		}).Error; err != nil {
+			return err
+		}
+
+		// ================== LOG FLOW REJECT ================== //
+		if err := tx.Create(&models.ApprovalLog{
+			ID:        uuid.New(),
+			FlowID:    flow.ID,
+			Action:    "flow_rejected",
 			ByUserID:  &userID,
 			Note:      reason,
 			CreatedAt: now,
