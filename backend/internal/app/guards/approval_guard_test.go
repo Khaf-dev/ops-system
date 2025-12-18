@@ -1,7 +1,9 @@
 package guards
 
 import (
+	"backend/internal/app/constants"
 	"backend/internal/app/models"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -67,13 +69,14 @@ func TestCanApprove_NotApprover(t *testing.T) {
 	guard := NewApprovalGuard(
 		&mockFlowRepo{
 			flow: &models.ApprovalFlow{
-				Status:      "in_review",
+				Status:      constants.RequestInReview,
 				CurrentStep: 1,
 			},
 		},
 		&mockStepRepo{
 			step: &models.ApprovalStep{
-				UserID: &otherUser,
+				StepNumber: 1,
+				UserID:     &otherUser,
 			},
 		},
 		&mockUserRepo{},
@@ -89,13 +92,14 @@ func TestCanApprove_GroupApprover(t *testing.T) {
 	guard := NewApprovalGuard(
 		&mockFlowRepo{
 			flow: &models.ApprovalFlow{
-				Status:      "in_review",
+				Status:      constants.RequestInReview,
 				CurrentStep: 1,
 			},
 		},
 		&mockStepRepo{
 			step: &models.ApprovalStep{
-				GroupName: "finance",
+				StepNumber: 1,
+				GroupName:  "finance",
 			},
 		},
 		&mockUserRepo{
@@ -120,4 +124,75 @@ func TestCanApprove_FlowNotActive(t *testing.T) {
 
 	err := guard.CanApprove(uuid.New(), uuid.New())
 	assert.ErrorIs(t, err, ErrFlowNotActive)
+}
+
+func TestCanApprove_FlowNotFound(t *testing.T) {
+	guard := NewApprovalGuard(
+		&mockFlowRepo{err: errors.New("db error")},
+		&mockStepRepo{},
+		&mockUserRepo{},
+	)
+
+	err := guard.CanApprove(uuid.New(), uuid.New())
+	assert.ErrorIs(t, err, ErrFlowNotFound)
+}
+
+func TestCanApprove_StepNil(t *testing.T) {
+	guard := NewApprovalGuard(
+		&mockFlowRepo{
+			flow: &models.ApprovalFlow{
+				Status:      "in_review",
+				CurrentStep: 1,
+			},
+		},
+		&mockStepRepo{
+			step: nil,
+		},
+		&mockUserRepo{},
+	)
+
+	err := guard.CanApprove(uuid.New(), uuid.New())
+	assert.ErrorIs(t, err, ErrNotCurrentStep)
+}
+
+func TestCanApprove_StepMismatch(t *testing.T) {
+	guard := NewApprovalGuard(
+		&mockFlowRepo{
+			flow: &models.ApprovalFlow{
+				Status:      constants.RequestInReview,
+				CurrentStep: 2,
+			},
+		},
+		&mockStepRepo{
+			step: &models.ApprovalStep{
+				StepNumber: 1,
+			},
+		},
+		&mockUserRepo{},
+	)
+
+	err := guard.CanApprove(uuid.New(), uuid.New())
+	assert.ErrorIs(t, err, ErrNotCurrentStep)
+}
+
+func TestCanApprove_GroupRepoError(t *testing.T) {
+	guard := NewApprovalGuard(
+		&mockFlowRepo{
+			flow: &models.ApprovalFlow{
+				Status:      "in_review",
+				CurrentStep: 1,
+			},
+		},
+		&mockStepRepo{
+			step: &models.ApprovalStep{
+				GroupName: "finance",
+			},
+		},
+		&mockUserRepo{
+			err: errors.New("ldap down"),
+		},
+	)
+
+	err := guard.CanApprove(uuid.New(), uuid.New())
+	assert.Error(t, err)
 }

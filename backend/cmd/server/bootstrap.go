@@ -82,17 +82,6 @@ func SetupApp() *App {
 		approvalLogic,
 	)
 
-	approvalSvc := services.NewApprovalService(
-		db,
-		opsRepo,
-		approvalFlowRepo,
-		approverCfgRepo,
-		approvalStepRepo,
-		approvalLogRepo,
-		userRepo,
-		approvalLogic,
-	)
-
 	adminSvc := services.NewAdminService(
 		userRepo,
 		levelRepo,
