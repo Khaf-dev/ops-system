@@ -32,8 +32,15 @@ func NewApprovalGuard(
 	}
 }
 
-func (g *ApprovalGuard) CanApprove(userID, flowID uuid.UUID) error {
+/*
+Can Approve hanya bisa :
+1. flow ada & aktif
+2. ada step di current step
+3. user termasuk salah satu approver (direct/group)
+*/
 
+func (g *ApprovalGuard) CanApprove(userID, flowID uuid.UUID) error {
+	// ======= flow ======= //
 	flow, err := g.FlowRepo.GetByID(flowID)
 	if err != nil || flow == nil {
 		return ErrFlowNotFound
@@ -43,38 +50,35 @@ func (g *ApprovalGuard) CanApprove(userID, flowID uuid.UUID) error {
 		return ErrFlowNotActive
 	}
 
-	step, err := g.StepRepo.GetStepsByStepNumber(flow.ID, flow.CurrentStep)
-	if err != nil || step == nil {
+	// ======= steps di current level ======= //
+	steps, err := g.StepRepo.GetStepsByStepNumber(flow.ID, flow.CurrentStep)
+	if err != nil || len(steps) == 0 {
 		return ErrNotCurrentStep
 	}
 
-	if step.StepNumber != flow.CurrentStep {
-		return ErrNotCurrentStep
-	}
+	// ======= cek apakah user termasuk approver ======= //
+	for _, step := range steps {
 
-	// ============= invalid config
-	if step.UserID != nil && step.GroupName != "" {
-		return errors.New("invalid approval step config")
-	}
+		// invalid config guard
+		if step.UserID != nil && step.GroupName != "" {
+			return errors.New("invalid approval step config")
+		}
 
-	// ============= direct user approver
-	if step.UserID != nil {
-		if *step.UserID != userID {
-			return ErrNotApprover
+		// direct user
+		if step.UserID != nil && *step.UserID == userID {
+			return nil
 		}
-		return nil
-	}
 
-	// ============= group approver
-	if step.GroupName != "" {
-		ok, err := g.UserRepo.IsUserInGroup(userID, step.GroupName)
-		if err != nil {
-			return err
+		// group approve
+		if step.GroupName != "" {
+			ok, err := g.UserRepo.IsUserInGroup(userID, step.GroupName)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return nil
+			}
 		}
-		if !ok {
-			return ErrNotApprover
-		}
-		return nil
 	}
 
 	return ErrNotApprover

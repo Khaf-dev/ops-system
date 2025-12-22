@@ -11,8 +11,7 @@ type ApprovalFlowReader interface {
 }
 
 type ApprovalStepReader interface {
-	GetCurrentStep(flowID uuid.UUID, step int) (*models.ApprovalStep, error)
-	GetStepsByStepNumber(flowID uuid.UUID, stepNumber int) ([]models.ApprovalStep, error)
+	GetStepsByStepNumber(flowID uuid.UUID, step int) ([]models.ApprovalStep, error)
 	GetMaxStepNumber(flowID uuid.UUID) (int, error)
 }
 
