@@ -129,28 +129,33 @@ func (s *ApprovalActionService) Approve(
 
 			// OR MODE //
 		case constants.ModeOR:
+			if !s.Logic.IsStepCompleted(steps, constants.ModeOR) {
+				return nil
+			}
+
 			for i := range steps {
 				if steps[i].ID == current.ID {
 					continue
 				}
-				if steps[i].Status == constants.RequestApproved {
+				if steps[i].Status != constants.RequestPending {
 					continue
 				}
 
 				steps[i].Status = constants.RequestCanceled
+				steps[i].ApprovedAt = &now
 				steps[i].Notes = "Auto-cancelled due to OR approval"
+
 				if err := tx.Save(&steps[i]).Error; err != nil {
 					return err
 				}
 
-				// Log cancel
 				if err := tx.Create(&models.ApprovalLog{
 					ID:        uuid.New(),
 					FlowID:    flow.ID,
 					StepID:    &steps[i].ID,
-					Action:    "step_cancelled",
+					Action:    "step_auto_cancelled_or",
 					ByUserID:  &userID,
-					Note:      "Auto-cancelled due to OR approval",
+					Note:      steps[i].Notes,
 					CreatedAt: now,
 				}).Error; err != nil {
 					return err
@@ -160,11 +165,14 @@ func (s *ApprovalActionService) Approve(
 
 		// ================== NEXT STEP ================== //
 		next := s.Logic.DetermineNextStepNumber(flow)
+
 		if next == 0 {
-			// ==== FINALIZE FLOW ==== //
+			// ====================== FINAL APPROVAL ====================== //
 			if err := tx.Model(&models.ApprovalFlow{}).Where("id = ?", flow.ID).Updates(map[string]interface{}{
-				"status":     constants.RequestApproved.String(),
-				"updated_at": now,
+				"status":            constants.RequestApproved.String(),
+				"approved_by_id":    userID,
+				"final_approved_at": now,
+				"updated_at":        now,
 			}).Error; err != nil {
 				return err
 			}
