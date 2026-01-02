@@ -1,12 +1,6 @@
 package database
 
-import (
-	"backend/internal/app/models"
-
-	"gorm.io/gorm"
-)
-
-func SeedApprovalConfig(db *gorm.DB) error {
+/* func SeedApprovalConfig(db *gorm.DB) error {
 	data := []models.ApproverConfig{
 		{TypeID: 1, Level: 1, UserID: 2}, // Admin
 		{TypeID: 1, Level: 2, UserID: 3}, // Manager
@@ -28,3 +22,7 @@ func SeedApprovalConfig(db *gorm.DB) error {
 
 	return nil
 }
+
+FUNGSI INI MASIH BELUM BISA DIGUNAKAN KARENA MASIH ADA BENTROK DENGAN SEED APPROVAL NYA
+
+*/
